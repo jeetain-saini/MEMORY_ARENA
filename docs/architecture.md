@@ -474,4 +474,140 @@ Legal status transitions are owned by `MemoryStatus.can_transition_to`: `ACTIVE�
 - **Consolidation & contradiction handling** — `CONTRADICTS` edges + domain events are the hooks for a future LangGraph consolidation workflow to merge/reconcile memories.
 - **Event-driven side effects** — the recorded events enable an outbox → queue → graph-sync pipeline without touching the domain.
 
-*Stage 3 implements the repositories and the concrete use cases against the infrastructure managers from Stage 1.*
+*Stage 3 implements persistence.*
+
+---
+
+## 9. Stage 3 — Persistence Layer
+
+Stage 3 implements **persistence only** — async SQLAlchemy models, mappers, the
+repository implementations behind the Stage 2 ports, a Unit of Work, and Alembic
+migrations. **No LangGraph, no embeddings generation, no retrieval, no Neo4j
+logic, no API endpoints.**
+
+### 9.1 New files
+
+```
+backend/app/
+├── infrastructure/database/
+│   ├── base.py                 # DeclarativeBase, naming convention, mixins, Vector type
+│   ├── session.py              # async engine + session-factory builders
+│   ├── mappers.py              # domain <-> model translation
+│   ├── unit_of_work.py         # SQLAlchemyUnitOfWork
+│   └── models/
+│       ├── user.py · memory.py · memory_score.py
+│       ├── memory_relation.py · memory_version.py · memory_embedding.py
+│       └── __init__.py         # registers all tables on Base.metadata
+├── application/interfaces/unit_of_work.py   # UnitOfWork port
+└── repositories/
+    ├── memory_repository.py            # MemoryRepositoryImpl
+    ├── memory_relation_repository.py   # MemoryRelationRepositoryImpl
+    └── memory_version_repository.py    # MemoryVersionRepositoryImpl
+
+backend/alembic/
+├── env.py · script.py.mako
+└── versions/0001_initial_schema.py     # creates all 6 tables + pgvector extension
+
+backend/tests/
+├── unit/test_mappers.py
+└── integration/test_repositories.py · test_migration.py
+```
+
+### 9.2 The persistence flow: Domain → Repository → Mapper → Database
+
+```
+   Use case (Stage 4)
+        │  speaks domain entities + repository PORTS
+        ▼
+   Domain entity (Memory)                     ← pure Python, no SQLAlchemy
+        │
+        ▼
+   Repository impl (MemoryRepositoryImpl)      ← implements the Stage 2 port
+        │  delegates translation to…
+        ▼
+   Mapper (memory_to_model / model_to_memory)  ← the ONLY code importing both sides
+        │
+        ▼
+   ORM model (MemoryModel + MemoryScoreModel)  ← SQLAlchemy, persistence detail
+        │  via AsyncSession owned by…
+        ▼
+   Unit of Work (SQLAlchemyUnitOfWork)         ← commit / rollback boundary
+        │
+        ▼
+   PostgreSQL (+ pgvector)
+```
+
+The mapper is the crucial seam: because it is the single place that knows both a
+`Memory` and a `MemoryModel`, the database schema can change without touching the
+domain, and the domain can evolve without a migration unless persistence is
+actually affected. Repositories never commit — the **Unit of Work** owns the
+transaction, so a multi-entity operation (snapshot a version *and* update the
+memory) is atomic.
+
+### 9.3 ER diagram
+
+```
+        ┌──────────────┐
+        │    users     │
+        │ id (PK)      │
+        │ email (UQ)   │
+        └──────┬───────┘
+               │ 1
+               │            ┌────────────────────────┐
+               │ N          │     memory_scores       │
+        ┌──────▼───────┐ 1  │ id (PK)                 │
+        │   memories   │────│ memory_id (FK,UQ) ──────┼─┐ 1:1
+        │ id (PK)      │ 1  │ importance/utility/...  │ │
+        │ user_id (FK) │    └─────────────────────────┘ │
+        │ content      │◀─────────────────────────────── ┘
+        │ memory_type  │
+        │ status       │ 1      ┌───────────────────────────┐
+        │ version      │────────│      memory_versions       │  N  (history)
+        │ is_promoted  │        │ id (PK)                    │
+        │ meta (JSONB) │        │ memory_id (FK)             │
+        │ deleted_at   │        │ version_number             │
+        └──┬────────┬──┘        │ (memory_id,version) UQ     │
+        N  │        │ N         └────────────────────────────┘
+   source  │        │ target
+        ┌──▼────────▼──────────────┐   ┌────────────────────────────┐
+        │     memory_relations      │   │     memory_embeddings       │
+        │ id (PK)                   │   │ embedding_id (PK)           │
+        │ source_memory_id (FK)     │   │ memory_id (FK)              │
+        │ target_memory_id (FK)     │   │ vector  : vector(1536)      │  ← pgvector
+        │ relation_type · weight    │   │ model_name                  │
+        │ (src,tgt,type) UQ         │   │ (memory_id,model_name) UQ   │
+        └───────────────────────────┘   └────────────────────────────┘
+```
+
+All tables carry `created_at`/`updated_at`; `users` and `memories` add a
+`deleted_at` tombstone for **soft deletion** (a delete sets `deleted_at` + status
+`deleted`; queries filter `deleted_at IS NULL`). Every child FK is
+`ON DELETE CASCADE` for referential integrity on hard deletes.
+
+### 9.4 Why pgvector exists now, before retrieval
+
+The `memory_embeddings` table and its `vector(1536)` column are created in this
+stage even though **nothing writes or searches embeddings yet**. Three reasons:
+
+1. **Schema and migrations are the expensive thing to change later.** Settling
+   the table, its foreign key, and the `CREATE EXTENSION vector` now means Stage 4
+   adds *data and an index*, not a schema rewrite on a populated production DB.
+2. **The extension is an infrastructure decision, not a feature.** Enabling
+   pgvector is a migration-level, ops-reviewed change; coupling it to the initial
+   schema keeps environment provisioning (local, CI, prod) consistent from day one.
+3. **It validates the cross-dialect strategy early.** The `Vector` type degrades
+   to JSON `TEXT` on SQLite, so the whole schema — embeddings included — is
+   creatable in tests today, proving the design before the embedding model lands.
+
+The column is intentionally inert: a place reserved at the right spot in the data
+model so that adding semantic search becomes additive.
+
+### 9.5 Test results
+
+`38 passed` (PyTest, isolated in-memory SQLite via `aiosqlite` + `StaticPool`):
+
+- **Mapper tests** — domain↔model round-trips for Memory (+score), Relation, Version; rehydration emits no events.
+- **Repository + UoW tests** — save/get, update (content + score), soft delete hides rows, `search` filtering (type / text / weighted-score threshold), relations & versions persistence, and `rollback` discarding uncommitted work.
+- **Migration tests** — revision graph (`0001_initial`, no down-revision), all six `create_table` calls present, `CREATE EXTENSION vector` present, and `Base.metadata` declares the six required tables.
+
+*Stage 4 introduces the concrete use cases (orchestrating these repositories via the Unit of Work) and the API endpoints.*

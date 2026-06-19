@@ -15,9 +15,11 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.interfaces.unit_of_work import UnitOfWork
 from app.core.config import Settings, get_settings
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
+from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.infrastructure.graph.neo4j import neo4j_manager
 
 
@@ -42,8 +44,18 @@ def get_neo4j() -> AsyncDriver:
     return neo4j_manager.driver
 
 
+def get_unit_of_work() -> UnitOfWork:
+    """Provide a fresh Unit of Work bound to the shared session factory.
+
+    Use cases (Stage 4) depend on the ``UnitOfWork`` abstraction; this provider
+    supplies the SQLAlchemy implementation as the composition root.
+    """
+    return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
 RedisDep = Depends(get_redis)
 Neo4jDep = Depends(get_neo4j)
+UnitOfWorkDep = Depends(get_unit_of_work)

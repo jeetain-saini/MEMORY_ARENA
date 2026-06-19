@@ -1,0 +1,51 @@
+# =============================================================================
+# MemoryArena — Continuous Integration
+# Quality gates run on every push and pull request. Jobs are guarded so they
+# no-op cleanly in Stage 0 (no source yet) and activate as code lands.
+# =============================================================================
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend · lint · type · test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Ruff (lint)
+        run: ruff check app || true   # Stage 0: app is empty; remove `|| true` in Stage 1
+      - name: Mypy (type check)
+        run: mypy app || true
+      - name: Pytest
+        run: pytest -q || true
+
+  frontend:
+    name: Frontend · lint · type · build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install dependencies
+        run: npm install
+      - name: Type check
+        run: npm run typecheck || true   # Stage 0: scaffolding only
+      - name: Lint
+        run: npm run lint || true

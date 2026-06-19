@@ -1,0 +1,128 @@
+# =============================================================================
+# MemoryArena — Local development orchestration
+#
+# Stage 0: the three backing datastores are fully configured and runnable.
+# The `backend` and `frontend` application services are defined but commented
+# out until Stage 1 provides their entrypoints. Bring them online with:
+#   docker compose up -d postgres neo4j redis
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL with the pgvector extension — primary relational store AND the
+  # semantic vector index for memory embeddings (single source of truth).
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: memoryarena-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-memoryarena}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+      POSTGRES_DB: ${POSTGRES_DB:-memoryarena}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-memoryarena}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - memoryarena-net
+
+  # ---------------------------------------------------------------------------
+  # Neo4j — knowledge graph of entities and their relationships, enabling
+  # multi-hop, relationship-aware memory retrieval.
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5-community
+    container_name: memoryarena-neo4j
+    restart: unless-stopped
+    environment:
+      NEO4J_AUTH: ${NEO4J_USER:-neo4j}/${NEO4J_PASSWORD:-change-me}
+      NEO4J_PLUGINS: '["apoc"]'
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt protocol
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+    networks:
+      - memoryarena-net
+
+  # ---------------------------------------------------------------------------
+  # Redis — low-latency cache, rate-limiting buckets, and background job queue.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: memoryarena-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - memoryarena-net
+
+  # ---------------------------------------------------------------------------
+  # Backend (FastAPI) — enabled in Stage 1 once app/main.py exposes an ASGI app.
+  # ---------------------------------------------------------------------------
+  # backend:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: ../infrastructure/docker/backend/Dockerfile
+  #   container_name: memoryarena-backend
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   ports:
+  #     - "${APP_PORT:-8000}:8000"
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     neo4j:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - memoryarena-net
+
+  # ---------------------------------------------------------------------------
+  # Frontend (Next.js) — enabled in Stage 4.
+  # ---------------------------------------------------------------------------
+  # frontend:
+  #   build:
+  #     context: ./frontend
+  #     dockerfile: ../infrastructure/docker/frontend/Dockerfile
+  #   container_name: memoryarena-frontend
+  #   restart: unless-stopped
+  #   env_file: .env
+  #   ports:
+  #     - "3000:3000"
+  #   depends_on:
+  #     - backend
+  #   networks:
+  #     - memoryarena-net
+
+volumes:
+  postgres_data:
+  neo4j_data:
+  neo4j_logs:
+  redis_data:
+
+networks:
+  memoryarena-net:
+    driver: bridge

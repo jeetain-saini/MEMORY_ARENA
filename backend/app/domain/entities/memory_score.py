@@ -61,14 +61,17 @@ class MemoryScore:
         return self.calculate_total_score() >= limit
 
     def reinforced(self, step: float | None = None) -> "MemoryScore":
-        """Return a new score reflecting an access/reinforcement.
+        """Return a new score reflecting a successful reuse.
 
-        Frequency rises by ``step`` (capped at 1.0) and recency resets to fresh.
+        Every reuse raises ``frequency`` and ``utility`` by ``step`` (each capped
+        at 1.0) and refreshes recency to fresh — a reused memory is, by
+        definition, recently accessed.
         """
         delta = self.REINFORCEMENT_STEP if step is None else step
         return replace(
             self,
             frequency=min(1.0, self.frequency + delta),
+            utility=min(1.0, self.utility + delta),
             recency=1.0,
         )
 

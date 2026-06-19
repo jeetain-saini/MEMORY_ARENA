@@ -43,6 +43,10 @@ class MemoryRepository(ABC):
         self, user_id: UUID, *, limit: int = 20, offset: int = 0
     ) -> list[Memory]: ...
 
+    @abstractmethod
+    async def list_for_analytics(self, user_id: UUID | None = None) -> list[Memory]:
+        """Return all non-deleted memories (optionally for one user) for analytics."""
+
 
 class MemoryRelationRepository(ABC):
     """Persistence port for edges in the memory graph."""

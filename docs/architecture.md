@@ -698,4 +698,120 @@ Every response uses the standardized envelope: `{ "success", "data" | "error", "
 - **Event-dispatcher tests** — matching delivery, MRO catch-all, async handler awaited, failure isolation.
 - **DI tests** — dispatcher singleton; `MemoryService` assembled with the full method surface.
 
-*Stage 5 would introduce embeddings, vector/graph retrieval, and the LangGraph extraction/consolidation workflows.*
+*Stage 5 builds the Memory Intelligence Engine.*
+
+---
+
+## 11. Stage 5 — Memory Intelligence Engine
+
+Stage 5 makes memories **evolve**: they are reinforced on reuse, decay over
+time, get promoted when valuable, and are archived when stale. This is pure
+memory intelligence — **no embeddings, vector search, retrieval, Neo4j, or LLM
+calls.**
+
+### 11.1 New files
+
+```
+backend/app/
+├── application/
+│   ├── dto/analytics_dto.py                       # MemoryAnalytics
+│   ├── interfaces/scheduler.py                     # Scheduler + ScheduledJob ports (+ future jobs)
+│   └── services/
+│       ├── intelligence_config.py                  # tunable thresholds
+│       ├── decay_strategies.py                     # DecayStrategy + Exponential/Linear
+│       ├── memory_intelligence_service.py          # reinforce/decay/promote/archive/evaluate
+│       └── memory_analytics_service.py             # counts, average, distribution
+├── schemas/analytics.py                            # AnalyticsResponseSchema
+└── alembic/versions/0002_add_memory_priority.py    # priority column
+
+Updated: domain (events MemoryReinforced/MemoryDecayed, MemoryPromoted.priority;
+MemoryScore.reinforced bumps utility; Memory gains priority, decay(), reinforce
+event), persistence (priority column + mappers + analytics query), API
+(reinforce/promote/archive/analytics endpoints + providers), DTO/schema priority.
+```
+
+### 11.2 Memory evolution
+
+```
+            Created                Memory.create()              ACTIVE, score≈neutral, priority 0
+               │
+               ▼
+   ┌──────  Reinforced  ◀── successful reuse ─┐   reinforce(): frequency↑ utility↑, recency→1.0
+   │           │                              │   → MemoryReinforced ; refreshes updated_at
+   │           ▼                              │
+   │        Promoted     total_score ≥ 0.65   │   promote(): is_promoted=True, priority++
+   │           │         (stays ACTIVE)       │   → MemoryPromoted
+   │           ▼                              │
+   └──────   Decayed   ◀── time passes ───────┘   decay(factor): recency × factor
+               │                                  → MemoryDecayed ; does NOT touch updated_at
+               ▼
+            Archived     score < 0.30 AND idle ≥ 30d   archive(): ACTIVE → ARCHIVED
+               │                                        → MemoryArchived  (restore() reverses)
+               ▼
+            Deleted      delete(): → DELETED (terminal, soft-deleted in store)
+```
+
+Reinforcement and decay are continuous and can repeat; promotion and archival are
+threshold-driven transitions. The cycle is intentionally a loop: a decayed memory
+can be reinforced back to relevance before it ever qualifies for archival.
+
+### 11.3 Scoring strategy
+
+A memory's standing is one number, `total_score ∈ [0, 1]`, a fixed weighted sum
+of five normalized signals (weights sum to 1.0, so the result is always
+normalized):
+
+| Signal | Weight | Meaning | Moved by |
+| --- | --- | --- | --- |
+| importance | 0.30 | intrinsic significance | set on creation, slow to change |
+| utility | 0.25 | how useful when reused | **reinforce** (↑) |
+| frequency | 0.20 | how often reused | **reinforce** (↑) |
+| recency | 0.15 | how recently touched | **reinforce** (→1.0) / **decay** (×factor) |
+| confidence | 0.10 | how sure it is correct | extraction/consolidation (future) |
+
+The intelligence policy reads this score against tunable thresholds
+(`IntelligenceConfig`): **promotion** needs `total_score ≥ promotion_threshold`
+(0.65); **archival** needs `total_score < archival_score_threshold` (0.30) **and**
+idle ≥ `archival_max_idle_days` (30). Decay is governed by an injectable
+`DecayStrategy` — `ExponentialDecayStrategy` (half-life) by default, or
+`LinearDecayStrategy` — so the recency curve is configurable without touching the
+engine. Decay is measured against `updated_at` and deliberately doesn't update it,
+so repeated sweeps keep measuring true idle age.
+
+### 11.4 Endpoints added
+
+| Method | Path | Effect |
+| --- | --- | --- |
+| POST | `/api/v1/memories/{id}/reinforce?user_id=&step=` | raise frequency + utility |
+| POST | `/api/v1/memories/{id}/promote?user_id=` | flag + priority (409 if below threshold) |
+| POST | `/api/v1/memories/{id}/archive?user_id=&force=` | ARCHIVE (422 if not eligible) |
+| GET | `/api/v1/memories/analytics?user_id=` | counts, average score, distribution |
+
+### 11.5 Future scheduler design
+
+The evolution operations above are per-memory and synchronous today. At scale
+they run as recurring background sweeps, defined now as **ports only**
+(`app/application/interfaces/scheduler.py`):
+
+- **`DecaySweepJob`** — nightly; apply `decay_memory` across active memories.
+- **`ArchivalSweepJob`** — periodic; archive every memory where `should_archive` holds.
+- **`PromotionSweepJob`** — periodic; promote memories that have crossed the threshold.
+
+A concrete `Scheduler` (APScheduler / Celery beat / Kubernetes CronJob) will
+implement `register(job, cron)` / `start` / `stop` and invoke the same
+`MemoryIntelligenceService` methods the API uses — no new business logic, just a
+trigger. Each job is an independent unit, so they can be sharded by user/tenant
+and run on separate workers as volume grows.
+
+### 11.6 Test results
+
+`92 passed` (target was 75+). New in Stage 5:
+
+- **Decay strategies** — exponential half-life (1.0 at 0, 0.5 at half-life, monotonic), linear bleed-off + clamping, validation.
+- **Domain evolution** — reinforce raises frequency/utility + emits event + refreshes `updated_at`; decay lowers recency + emits event + leaves `updated_at`; promote increments priority; guards.
+- **Intelligence service** (SQLite + dispatcher) — reinforce, promote (incl. below-threshold 409 path), decay (recency ×0.5 at half-life), archive (eligible / not-eligible / force), evaluate.
+- **Analytics** — empty, mixed counts + distribution, per-user scoping.
+- **Intelligence API** — reinforce/promote/archive/analytics happy paths + 404/409/422 mappings.
+- **Scheduler** — abstractions are abstract; future jobs declared with names.
+
+*Stage 6 would introduce embeddings, vector/graph retrieval, and LangGraph extraction/consolidation workflows.*

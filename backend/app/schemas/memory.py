@@ -130,6 +130,7 @@ class MemoryResponseSchema(BaseModel):
     total_score: float
     version: int
     is_promoted: bool
+    priority: int
     created_at: datetime
     updated_at: datetime
 

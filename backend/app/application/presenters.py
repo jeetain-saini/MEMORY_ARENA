@@ -20,6 +20,7 @@ def memory_to_response(memory: Memory) -> CreateMemoryResponse:
         total_score=memory.total_score,
         version=memory.version,
         is_promoted=memory.is_promoted,
+        priority=memory.priority,
         created_at=memory.created_at,
         updated_at=memory.updated_at,
     )

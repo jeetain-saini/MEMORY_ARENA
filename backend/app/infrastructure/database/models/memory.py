@@ -36,6 +36,7 @@ class MemoryModel(TimestampMixin, SoftDeleteMixin, Base):
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_promoted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     meta: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
 
     # One-to-one score; loaded eagerly by repositories when needed.

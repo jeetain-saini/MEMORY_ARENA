@@ -106,6 +106,17 @@ class MemoryRepositoryImpl(MemoryRepository):
         result = await self._session.scalars(stmt)
         return [model_to_memory(m) for m in result.unique().all()]
 
+    async def list_for_analytics(self, user_id: uuid.UUID | None = None) -> list[Memory]:
+        stmt = (
+            select(MemoryModel)
+            .options(selectinload(MemoryModel.score))
+            .where(MemoryModel.deleted_at.is_(None))
+        )
+        if user_id is not None:
+            stmt = stmt.where(MemoryModel.user_id == user_id)
+        result = await self._session.scalars(stmt)
+        return [model_to_memory(m) for m in result.unique().all()]
+
     # -- internals ----------------------------------------------------------
     async def _load(self, memory_id: uuid.UUID, *, include_deleted: bool) -> MemoryModel | None:
         stmt = (

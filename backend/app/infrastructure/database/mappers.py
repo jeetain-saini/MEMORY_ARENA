@@ -64,6 +64,7 @@ def memory_to_model(memory: Memory) -> MemoryModel:
         status=memory.status.value,
         version=memory.version,
         is_promoted=memory.is_promoted,
+        priority=memory.priority,
         meta=dict(memory.metadata),
         created_at=memory.created_at,
         updated_at=memory.updated_at,
@@ -78,6 +79,7 @@ def apply_memory_to_model(model: MemoryModel, memory: Memory) -> None:
     model.status = memory.status.value
     model.version = memory.version
     model.is_promoted = memory.is_promoted
+    model.priority = memory.priority
     model.meta = dict(memory.metadata)
     model.updated_at = memory.updated_at
 
@@ -93,6 +95,7 @@ def model_to_memory(model: MemoryModel) -> Memory:
         metadata=dict(model.meta or {}),
         version=model.version,
         is_promoted=model.is_promoted,
+        priority=model.priority,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )

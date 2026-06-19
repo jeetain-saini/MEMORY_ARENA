@@ -17,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
+from app.application.services.intelligence_config import IntelligenceConfig
+from app.application.services.memory_analytics_service import MemoryAnalyticsService
+from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.services.memory_service import MemoryService
 from app.core.config import Settings, get_settings
 from app.infrastructure.cache.redis import redis_manager
@@ -69,6 +73,33 @@ def get_memory_service(
     return MemoryService(uow, dispatcher)
 
 
+def get_intelligence_config() -> IntelligenceConfig:
+    """Provide the (tunable) intelligence thresholds. Defaults for now."""
+    return IntelligenceConfig()
+
+
+def get_decay_strategy() -> DecayStrategy:
+    """Provide the configured recency-decay strategy (default: exponential)."""
+    return ExponentialDecayStrategy()
+
+
+def get_memory_intelligence_service(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    dispatcher: EventDispatcher = Depends(get_event_dispatcher),
+    config: IntelligenceConfig = Depends(get_intelligence_config),
+    decay_strategy: DecayStrategy = Depends(get_decay_strategy),
+) -> MemoryIntelligenceService:
+    """Assemble the Memory Intelligence Engine for a request."""
+    return MemoryIntelligenceService(uow, dispatcher, config, decay_strategy)
+
+
+def get_memory_analytics_service(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+) -> MemoryAnalyticsService:
+    """Assemble the analytics service for a request."""
+    return MemoryAnalyticsService(uow)
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
@@ -77,3 +108,5 @@ Neo4jDep = Depends(get_neo4j)
 UnitOfWorkDep = Depends(get_unit_of_work)
 EventDispatcherDep = Depends(get_event_dispatcher)
 MemoryServiceDep = Depends(get_memory_service)
+MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
+MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)

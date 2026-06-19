@@ -39,6 +39,7 @@ class CreateMemoryResponse:
     is_promoted: bool
     created_at: datetime
     updated_at: datetime
+    priority: int = 0
 
 
 @dataclass(frozen=True)

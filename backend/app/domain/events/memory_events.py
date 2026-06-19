@@ -64,3 +64,21 @@ class MemoryPromoted(DomainEvent):
     memory_id: UUID
     user_id: UUID
     total_score: float
+    priority: int
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemoryReinforced(DomainEvent):
+    memory_id: UUID
+    user_id: UUID
+    frequency: float
+    utility: float
+    total_score: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemoryDecayed(DomainEvent):
+    memory_id: UUID
+    user_id: UUID
+    recency: float
+    total_score: float

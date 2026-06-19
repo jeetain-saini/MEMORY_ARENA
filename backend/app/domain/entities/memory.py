@@ -22,8 +22,10 @@ from app.domain.events.memory_events import (
     DomainEvent,
     MemoryArchived,
     MemoryCreated,
+    MemoryDecayed,
     MemoryDeleted,
     MemoryPromoted,
+    MemoryReinforced,
     MemoryUpdated,
 )
 from app.domain.exceptions.errors import InvalidMemoryStateError, MemoryValidationError
@@ -48,6 +50,7 @@ class Memory:
     metadata: dict[str, Any] = field(default_factory=dict)
     version: int = 1
     is_promoted: bool = False
+    priority: int = 0
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -110,13 +113,43 @@ class Memory:
         )
 
     def reinforce(self, step: float | None = None) -> None:
-        """Strengthen the memory's score from an access/positive signal."""
+        """Strengthen the memory from a successful reuse (frequency + utility).
+
+        Counts as activity, so ``updated_at`` is refreshed and a
+        ``MemoryReinforced`` event is recorded.
+        """
         self._ensure_mutable()
         self.score = self.score.reinforced(step)
         self._touch()
+        self._record(
+            MemoryReinforced(
+                memory_id=self.id,
+                user_id=self.user_id,
+                frequency=self.score.frequency,
+                utility=self.score.utility,
+                total_score=self.score.calculate_total_score(),
+            )
+        )
+
+    def decay(self, recency_factor: float) -> None:
+        """Apply time-based recency decay (a system recalculation, not a use).
+
+        Deliberately does NOT refresh ``updated_at`` — decay must not look like
+        activity, or it would defeat idle-based archival.
+        """
+        self._ensure_mutable()
+        self.score = self.score.decayed(recency_factor)
+        self._record(
+            MemoryDecayed(
+                memory_id=self.id,
+                user_id=self.user_id,
+                recency=self.score.recency,
+                total_score=self.score.calculate_total_score(),
+            )
+        )
 
     def promote(self, *, threshold: float | None = None) -> None:
-        """Promote a high-value memory (e.g. short-term -> long-term salience)."""
+        """Promote a high-value memory: keep it ACTIVE, flag it, raise priority."""
         if self.status is not MemoryStatus.ACTIVE:
             raise InvalidMemoryStateError("Only an ACTIVE memory can be promoted.")
         if self.is_promoted:
@@ -126,12 +159,14 @@ class Memory:
                 "Memory score is below the promotion threshold."
             )
         self.is_promoted = True
+        self.priority += 1
         self._touch()
         self._record(
             MemoryPromoted(
                 memory_id=self.id,
                 user_id=self.user_id,
                 total_score=self.score.calculate_total_score(),
+                priority=self.priority,
             )
         )
 

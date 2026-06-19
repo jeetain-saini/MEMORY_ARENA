@@ -610,4 +610,92 @@ model so that adding semantic search becomes additive.
 - **Repository + UoW tests** — save/get, update (content + score), soft delete hides rows, `search` filtering (type / text / weighted-score threshold), relations & versions persistence, and `rollback` discarding uncommitted work.
 - **Migration tests** — revision graph (`0001_initial`, no down-revision), all six `create_table` calls present, `CREATE EXTENSION vector` present, and `Base.metadata` declares the six required tables.
 
-*Stage 4 introduces the concrete use cases (orchestrating these repositories via the Unit of Work) and the API endpoints.*
+*Stage 4 wires use cases and the API.*
+
+---
+
+## 10. Stage 4 — Application Services & API Layer
+
+Stage 4 connects the domain and persistence layers to the outside world:
+concrete use cases, an orchestration service, the HTTP endpoints, Pydantic
+validation, dependency wiring, an event dispatcher, and error→HTTP mapping.
+**No LangGraph, embeddings, vector search, Neo4j retrieval, or LLM calls.**
+
+### 10.1 New files
+
+```
+backend/app/
+├── application/
+│   ├── exceptions.py                      # ApplicationError, MemoryNotFoundException, MemoryValidationException
+│   ├── presenters.py                      # Memory -> response DTO
+│   ├── interfaces/event_dispatcher.py     # EventDispatcher port
+│   ├── use_cases/memory_use_cases_impl.py # Create/Update/Delete/Search impls
+│   └── services/memory_service.py         # orchestration facade
+├── infrastructure/events/in_process_dispatcher.py  # InProcessEventDispatcher (+ singleton)
+├── schemas/memory.py                      # Create/Update/Search request + Response schemas
+└── api/v1/routes/memories.py              # the six endpoints
+
+backend/tests/
+├── unit/test_event_dispatcher.py · test_dependencies.py
+└── integration/test_use_cases.py · test_api.py
+```
+Updated: `api/v1/dependencies/providers.py` (event-dispatcher + memory-service providers), `core/exceptions.py` (application/domain error handlers), `api/v1/router.py` (mount memories), `docs/architecture.md`.
+
+### 10.2 Endpoint table
+
+| Method | Path | Body / Params | Success | Errors |
+| --- | --- | --- | --- | --- |
+| POST | `/api/v1/memories` | `CreateMemoryRequestSchema` | **201** | 422 validation |
+| GET | `/api/v1/memories/{id}` | path id | **200** | 404 not found |
+| PUT | `/api/v1/memories/{id}` | `UpdateMemoryRequestSchema` | **200** | 404, 422, 409 state |
+| DELETE | `/api/v1/memories/{id}` | `?user_id=` | **200** | 404 not found |
+| POST | `/api/v1/memories/search` | `MemorySearchRequestSchema` | **200** | 422 validation |
+| GET | `/api/v1/memories/user/{user_id}` | `?limit=&offset=` | **200** | 422 validation |
+
+Every response uses the standardized envelope: `{ "success", "data" | "error", "request_id" }`.
+
+### 10.3 Request flow
+
+```
+   HTTP Request
+        │   (JSON validated by a Pydantic *Schema*: content length, metadata limits, enum membership)
+        ▼
+   FastAPI Router  (api/v1/routes/memories.py)
+        │   schema.to_dto()  →  application DTO
+        ▼
+   MemoryService  (orchestration only — no HTTP, no SQL)
+        │   delegates to the use case
+        ▼
+   Use Case  (CreateMemoryUseCaseImpl, …)
+        │   builds/loads a domain entity, enforces invariants
+        ▼
+   Unit of Work  (transaction boundary: commit / rollback)
+        │
+        ▼
+   Repository  (MemoryRepositoryImpl — implements the port)
+        │   mapper: domain ↔ ORM model
+        ▼
+   Database  (PostgreSQL)
+        ▲
+        │   after commit → use case pulls recorded domain events →
+        └── Event Dispatcher (in-process now; Kafka/RabbitMQ-ready behind the port)
+```
+
+### 10.4 Design decisions
+
+- **Use cases own the transaction + events.** Each opens a Unit of Work, mutates the aggregate, commits, then dispatches the events the aggregate recorded — events fire only after durable success, never on a rolled-back change.
+- **Service is orchestration-only.** `MemoryService` composes the use cases and exposes the read paths; it holds no SQL (those are behind ports) and no HTTP (that is the router). It is the single injection point the API depends on.
+- **Three error tiers, mapped centrally.** Pydantic `RequestValidationError` → 422 (sanitized details), application `MemoryNotFoundException` → 404 / `MemoryValidationException` → 422, and domain `InvalidMemoryStateError` → 409. The application layer stays framework-free; only the API layer knows HTTP.
+- **Dispatcher behind a port.** `InProcessEventDispatcher` matches handlers along the event MRO (register on `DomainEvent` for a catch-all) and isolates handler failures. Swapping it for a broker is a one-line composition-root change — no use-case edits.
+- **Schemas are the only pydantic.** Validation and the wire contract live at the edge; DTOs and the domain remain plain Python.
+
+### 10.5 Test results
+
+`57 passed` (PyTest). New in Stage 4:
+
+- **Use-case tests** (SQLite UoW + real dispatcher) — create persists + emits `MemoryCreated`; update snapshots the pre-edit version + emits `MemoryUpdated`; missing target → `MemoryNotFoundException`; delete soft-deletes + emits `MemoryDeleted`; search filters.
+- **API tests** (TestClient + fake service) — 201 envelope on create; 422 on blank content, bad enum, and empty update; 200/404 get; update bumps version; delete; search & list.
+- **Event-dispatcher tests** — matching delivery, MRO catch-all, async handler awaited, failure isolation.
+- **DI tests** — dispatcher singleton; `MemoryService` assembled with the full method surface.
+
+*Stage 5 would introduce embeddings, vector/graph retrieval, and the LangGraph extraction/consolidation workflows.*

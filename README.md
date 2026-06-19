@@ -8,7 +8,7 @@ This repository is a **monorepo** organized around **Clean Architecture** so tha
 
 ---
 
-## ⚠️ Project Status — Stage 0 (Foundation)
+## Project Status — Stage 0 (Foundation)
 
 This commit contains **structure only**: the directory layout, architecture documentation, and infrastructure scaffolding. **No business logic has been implemented yet.** Every Python package is a placeholder, and service modules document their intended responsibility without behavior.
 
@@ -16,7 +16,7 @@ The goal of Stage 0 is to lock in an architecture that can scale to **millions o
 
 ---
 
-## 🧱 Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 | --- | --- |
@@ -27,7 +27,7 @@ The goal of Stage 0 is to lock in an architecture that can scale to **millions o
 
 ---
 
-## 🗂️ Top-Level Layout
+## Top-Level Layout
 
 ```
 memory_project/
@@ -46,7 +46,7 @@ memory_project/
 
 ---
 
-## 🚀 Getting Started (Stage 0)
+## Getting Started (Stage 0)
 
 Stage 0 brings the infrastructure online; application containers will start serving traffic once Stage 1 adds entrypoints.
 
@@ -63,18 +63,18 @@ docker compose up -d postgres neo4j redis
 
 ---
 
-## 📚 Documentation
+## Documentation
 
 - **[docs/architecture.md](docs/architecture.md)** — Full architecture: Clean Architecture layering, dependency rule, data model, request lifecycle, scaling strategy, and a folder-by-folder rationale.
 - **docs/adr/** — Architecture Decision Records (one file per significant decision).
 
 ---
 
-## 🧭 Roadmap
+## Roadmap
 
 | Stage | Scope |
 | --- | --- |
-| **0** | ✅ Foundation — structure, architecture, infra scaffolding *(this commit)* |
+| **0** | Foundation — structure, architecture, infra scaffolding *(this commit)* |
 | **1** | Domain entities, core config, app entrypoints, health checks |
 | **2** | Memory ingestion use cases + LangGraph extraction workflow |
 | **3** | Semantic (pgvector) + graph (Neo4j) retrieval |
@@ -83,6 +83,6 @@ docker compose up -d postgres neo4j redis
 
 ---
 
-## 📝 License
+## License
 
 TBD.

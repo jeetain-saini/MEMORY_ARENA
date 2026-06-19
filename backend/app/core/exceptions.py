@@ -17,7 +17,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from app.application.exceptions import MemoryNotFoundException, MemoryValidationException
 from app.core.logging import get_request_id
+from app.domain.exceptions.errors import (
+    DomainError,
+    InvalidMemoryStateError,
+    MemoryValidationError,
+)
 from app.schemas.responses import ErrorDetail, ErrorResponse
 
 _logger = logging.getLogger("memoryarena.error")
@@ -70,15 +76,57 @@ def register_exception_handlers(app: FastAPI) -> None:
             content=_envelope(get_request_id(), exc.error_code, exc.message, exc.details),
         )
 
+    @app.exception_handler(MemoryNotFoundException)
+    async def _handle_memory_not_found(_: Request, exc: MemoryNotFoundException) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(get_request_id(), "memory_not_found", str(exc)),
+        )
+
+    @app.exception_handler(MemoryValidationException)
+    async def _handle_memory_validation(_: Request, exc: MemoryValidationException) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_envelope(get_request_id(), "memory_validation_error", str(exc), exc.details),
+        )
+
+    @app.exception_handler(InvalidMemoryStateError)
+    async def _handle_invalid_state(_: Request, exc: InvalidMemoryStateError) -> JSONResponse:
+        # Illegal lifecycle transition -> conflict with current resource state.
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(get_request_id(), "invalid_memory_state", str(exc)),
+        )
+
+    @app.exception_handler(MemoryValidationError)
+    async def _handle_domain_validation(_: Request, exc: MemoryValidationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_envelope(get_request_id(), "domain_validation_error", str(exc)),
+        )
+
+    @app.exception_handler(DomainError)
+    async def _handle_domain_error(_: Request, exc: DomainError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=_envelope(get_request_id(), "domain_error", str(exc)),
+        )
+
     @app.exception_handler(RequestValidationError)
     async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        # pydantic errors may embed non-serializable objects (e.g. the original
+        # ValueError in ``ctx``); keep only JSON-safe fields.
+        details = [
+            {"loc": list(err.get("loc", [])), "msg": err.get("msg"), "type": err.get("type")}
+            for err in exc.errors()
+        ]
         return JSONResponse(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=_envelope(
                 get_request_id(),
                 "validation_error",
                 "Request validation failed.",
-                details=exc.errors(),
+                details=details,
             ),
         )
 

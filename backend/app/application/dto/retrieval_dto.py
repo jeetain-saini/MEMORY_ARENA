@@ -50,6 +50,8 @@ class RetrievedMemory:
     status: MemoryStatus
     final_score: float
     scores: ScoreBreakdown
+    is_promoted: bool = False
+    priority: int = 0
 
 
 @dataclass(frozen=True)

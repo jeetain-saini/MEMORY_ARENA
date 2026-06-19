@@ -1053,4 +1053,130 @@ fusion, or service.
 - **Retrieval service** — end-to-end search (top_k + relevant first), debug (all + breakdown).
 - **API** — search/debug envelopes, score breakdown exposed, empty-query 422, filters accepted.
 
-*Stage 8 would add the LangGraph extraction/consolidation workflows and (separately) Neo4j graph traversal — building on this retrieval layer to assemble context, still without RAG response generation unless explicitly scoped.*
+*Stage 8 builds the context assembly engine.*
+
+---
+
+## 14. Stage 8 — Context Assembly Engine
+
+Stage 8 turns retrieved memories into a single, token-budgeted **context
+package** ready to hand to an LLM. **Context construction only** — **no
+LangGraph, no LLM calls, no chat generation, no Neo4j traversal.**
+
+### 14.1 New files
+
+```
+backend/app/
+├── application/
+│   ├── dto/context_dto.py                          # ContextRequest, ContextMemory, ContextPackage, debug DTOs
+│   ├── interfaces/
+│   │   ├── token_counter.py                        # TokenCounter port
+│   │   └── context_compressor.py                   # ContextCompressor port
+│   └── services/context/
+│       ├── config.py                               # ContextConfig
+│       ├── tokenization.py                         # HeuristicTokenCounter (~4 chars/token)
+│       ├── selection_service.py                    # MemorySelectionService (budget + priority)
+│       ├── conflict_detector.py                    # ConflictDetector (negation contradiction)
+│       ├── consolidation_service.py                # MemoryConsolidationService (dedupe)
+│       ├── compressor.py                           # HeuristicContextCompressor
+│       └── context_builder.py                      # ContextBuilderService (pipeline)
+├── schemas/context.py
+└── api/v1/routes/context.py                         # POST /context/build, /context/debug
+
+Updated: RetrievedMemory (+is_promoted/priority), hybrid retriever, providers, router.
+```
+
+### 14.2 Context assembly architecture
+
+```
+                       Query (text, user_id, filters, max_tokens, top_k)
+                                          │
+                                          ▼
+                          Retrieval  (Stage 7 hybrid engine → ranked RetrievedMemory)
+                                          │
+                                          ▼
+                          Selection  (promoted-first, score-ordered;
+                                      greedy fill under the token budget)
+                                          │
+                                          ▼
+                          Consolidation  (drop near-duplicates; keep the
+                                          highest-scored representative)
+                                          │
+                                          ▼
+                          Conflict Detection  (flag negation contradictions)
+                                          │
+                                          ▼
+                          Compression  (whitespace normalize; prune to budget;
+                                        render context_text)
+                                          │
+                                          ▼
+                          Context Package  (memories + context_text + token stats)
+```
+
+`debug` exposes the full provenance at every stage: selected, dropped (with
+reason), conflicts, consolidations, and compression stats.
+
+### 14.3 Token-budget strategy
+
+The budget (`max_tokens`) is enforced in two complementary places:
+
+1. **Selection (primary gate).** Candidates are ordered **promoted-first, then by
+   retrieval score**, and admitted greedily while they fit. This guarantees the
+   highest-value memories occupy the budget first; ones that don't fit are
+   dropped with reason `token_budget`. Greedy-by-priority (rather than strict
+   prefix) lets a small lower-ranked memory use leftover budget a large one
+   couldn't.
+2. **Compression (final guarantee).** After consolidation removes redundancy,
+   the compressor normalizes whitespace (free savings) and, if anything still
+   exceeds the budget, prunes the lowest-scored memories — so the emitted package
+   is *always* within `max_tokens`.
+
+Tokens are estimated by a `HeuristicTokenCounter` (~4 chars/token) behind the
+`TokenCounter` port; swap in tiktoken for model-exact budgeting with no logic
+change.
+
+### 14.4 Compression strategy
+
+`HeuristicContextCompressor` (no LLM):
+
+1. **Whitespace normalization** — collapse repeated whitespace per memory;
+   lossless token savings.
+2. **Budget pruning** — sort by score and drop the lowest until within budget
+   (reason `compression`).
+3. **Rendering** — emit `- (type) content` lines as `context_text`.
+
+It reports `original_tokens`, `compressed_tokens`, `ratio`, and
+`removed_memories`. A future `LLMCompressor` (summarization) implements the same
+`ContextCompressor` port — the builder is unaffected.
+
+### 14.5 Conflict detection & consolidation
+
+- **Conflict** — two memories with high overlap of *significant* terms (stopwords
+  and negation markers removed) where **exactly one is negated** ⇒
+  `negation_contradiction` (e.g. "I use Python" vs "I no longer use Python").
+  Conflicts are *reported*, not auto-resolved (resolution is a future, possibly
+  LLM-assisted, step).
+- **Consolidation** — memories are compared by token Jaccard; near-duplicates
+  (≥ 0.85) collapse to the **highest-scored** representative, recorded in a
+  `ConsolidationRecord`.
+
+### 14.6 API
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| POST | `/api/v1/context/build` | the `ContextPackage` (memories + context_text + token totals) |
+| POST | `/api/v1/context/debug` | package **plus** selected, dropped (reasons), conflicts, consolidations, compression stats |
+
+### 14.7 Test results
+
+`182 passed` (target 170+). New in Stage 8:
+
+- **Token counter** — empty, scaling, 4-chars/token.
+- **Selection** — score ordering, promoted-first, budget drop, leftover-fill, empty.
+- **Conflict detection** — negation contradiction, both-positive/both-negated no-conflict, unrelated, single.
+- **Consolidation** — duplicate merge keeps best, distinct kept, reason, empty.
+- **Compression** — within-budget keeps all, whitespace savings, over-budget prune, rendered text, empty ratio.
+- **Context builder** (SQLite + real retrieval) — package within budget, small-budget enforcement, conflicts reported, duplicate consolidation.
+- **API** — build/debug envelopes, full debug provenance, empty-query and invalid-budget 422.
+
+*Stage 9 would introduce the LangGraph extraction/consolidation workflows and Neo4j graph traversal — and, only if explicitly scoped, RAG response generation on top of this context package.*

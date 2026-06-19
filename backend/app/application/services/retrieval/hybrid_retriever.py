@@ -83,6 +83,8 @@ class HybridRetriever:
                     memory_type=memory.memory_type,
                     status=memory.status,
                     final_score=round(final, 6),
+                    is_promoted=memory.is_promoted,
+                    priority=memory.priority,
                     scores=ScoreBreakdown(
                         vector_score=round(vector_score, 6),
                         bm25_score=round(bm25_score, 6),

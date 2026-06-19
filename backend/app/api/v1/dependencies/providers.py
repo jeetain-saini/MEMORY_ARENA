@@ -19,6 +19,13 @@ from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.context.compressor import HeuristicContextCompressor
+from app.application.services.context.config import ContextConfig
+from app.application.services.context.conflict_detector import ConflictDetector
+from app.application.services.context.consolidation_service import MemoryConsolidationService
+from app.application.services.context.context_builder import ContextBuilderService
+from app.application.services.context.selection_service import MemorySelectionService
+from app.application.services.context.tokenization import HeuristicTokenCounter
 from app.application.services.retrieval.config import RetrievalConfig
 from app.application.services.retrieval.hybrid_retriever import HybridRetriever
 from app.application.services.retrieval.keyword_retriever import KeywordRetriever
@@ -145,6 +152,26 @@ def get_memory_retrieval_service(
     return MemoryRetrievalService(hybrid, reranker)
 
 
+def get_context_config() -> ContextConfig:
+    """Provide the (tunable) context-assembly configuration."""
+    return ContextConfig()
+
+
+def get_context_builder_service(
+    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
+    config: ContextConfig = Depends(get_context_config),
+) -> ContextBuilderService:
+    """Assemble the Context Assembly pipeline for a request."""
+    token_counter = HeuristicTokenCounter()
+    return ContextBuilderService(
+        retrieval_service=retrieval_service,
+        selection_service=MemorySelectionService(token_counter),
+        consolidation_service=MemoryConsolidationService(config.dedup_threshold),
+        conflict_detector=ConflictDetector(config.conflict_threshold),
+        compressor=HeuristicContextCompressor(token_counter),
+    )
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
@@ -157,3 +184,4 @@ MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
 MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
 EmbeddingProviderDep = Depends(get_embedding_provider)
 MemoryRetrievalServiceDep = Depends(get_memory_retrieval_service)
+ContextBuilderServiceDep = Depends(get_context_builder_service)

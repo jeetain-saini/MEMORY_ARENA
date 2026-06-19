@@ -13,10 +13,17 @@ import uuid
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.application.dto.embedding_dto import EmbeddingRecord
 from app.application.interfaces.repositories import MemoryEmbeddingRepository
-from app.infrastructure.database.mappers import embedding_to_model, model_to_embedding
+from app.domain.entities.memory import Memory
+from app.infrastructure.database.mappers import (
+    embedding_to_model,
+    model_to_embedding,
+    model_to_memory,
+)
+from app.infrastructure.database.models.memory import MemoryModel
 from app.infrastructure.database.models.memory_embedding import MemoryEmbeddingModel
 
 
@@ -53,6 +60,20 @@ class MemoryEmbeddingRepositoryImpl(MemoryEmbeddingRepository):
             delete(MemoryEmbeddingModel).where(MemoryEmbeddingModel.memory_id == memory_id)
         )
         await self._session.flush()
+
+    async def list_candidates(
+        self, user_id: uuid.UUID, model_name: str | None = None
+    ) -> list[tuple[Memory, list[float]]]:
+        stmt = (
+            select(MemoryModel, MemoryEmbeddingModel.vector)
+            .join(MemoryEmbeddingModel, MemoryEmbeddingModel.memory_id == MemoryModel.id)
+            .options(selectinload(MemoryModel.score))
+            .where(MemoryModel.user_id == user_id, MemoryModel.deleted_at.is_(None))
+        )
+        if model_name is not None:
+            stmt = stmt.where(MemoryEmbeddingModel.model_name == model_name)
+        rows = await self._session.execute(stmt)
+        return [(model_to_memory(memory), list(vector)) for memory, vector in rows.all()]
 
     async def _get_model(
         self, memory_id: uuid.UUID, model_name: str

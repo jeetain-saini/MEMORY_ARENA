@@ -98,3 +98,13 @@ class MemoryEmbeddingRepository(ABC):
     @abstractmethod
     async def delete_embedding(self, memory_id: UUID) -> None:
         """Delete all embeddings for a memory."""
+
+    @abstractmethod
+    async def list_candidates(
+        self, user_id: UUID, model_name: str | None = None
+    ) -> list[tuple[Memory, list[float]]]:
+        """Return (memory, vector) pairs for a user's non-deleted memories.
+
+        Used by vector retrieval to score candidates. (A production deployment
+        may push this down to a pgvector ANN index; the port stays the same.)
+        """

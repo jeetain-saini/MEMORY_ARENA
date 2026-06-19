@@ -932,4 +932,125 @@ to 503, since embedding is asynchronous and non-blocking for core reads/writes.
 - **Service** — generate, store, update (vector changes with content), delete, job UPSERT/DELETE, missing-memory no-op.
 - **Event integration** — `MemoryCreated`/`MemoryUpdated` → embedding stored; `MemoryDeleted` → embedding removed.
 
-*Stage 7 would introduce retrieval: vector similarity search over these embeddings, graph traversal, and the LangGraph extraction/consolidation workflows.*
+*Stage 7 builds the hybrid retrieval engine.*
+
+---
+
+## 13. Stage 7 — Hybrid Retrieval Engine
+
+Stage 7 retrieves memories by blending semantic similarity, lexical matching,
+memory-intelligence value, and recency, then reranks. **Retrieval only** — **no
+LangGraph, LLM calls, RAG response generation, or Neo4j graph traversal.**
+
+### 13.1 New files
+
+```
+backend/app/
+├── application/
+│   ├── dto/retrieval_dto.py                        # MemorySearchQuery, RetrievedMemory, RetrievalResult, ScoreBreakdown
+│   ├── interfaces/reranker.py                       # Reranker port
+│   └── services/retrieval/
+│       ├── config.py                                # RetrievalConfig (all weights)
+│       ├── scoring.py                               # cosine, recency, memory-boost, filters
+│       ├── bm25.py                                  # Okapi BM25 + tokenizer
+│       ├── vector_retriever.py                      # VectorRetriever (cosine)
+│       ├── keyword_retriever.py                     # KeywordRetriever (BM25)
+│       ├── hybrid_retriever.py                      # HybridRetriever (weighted fusion)
+│       ├── reranker.py                              # SimpleCrossEncoderReranker
+│       └── retrieval_service.py                     # MemoryRetrievalService (pipeline)
+├── schemas/retrieval.py                             # request/response schemas
+└── api/v1/routes/retrieval.py                       # POST /retrieval/search, /retrieval/debug
+
+Updated: MemoryEmbeddingRepository (+list_candidates), providers (retrieval DI), router.
+```
+
+### 13.2 Retrieval architecture
+
+```
+                    Query (text, user_id, filters, top_k)
+                                  │
+              ┌───────────────────┴───────────────────┐   (run concurrently)
+              ▼                                         ▼
+       Vector Search                              BM25 Search
+   embed query → cosine vs.                  tokenize → Okapi BM25 over
+   stored embeddings (pgvector)              content + metadata
+              │                                         │
+              └───────────────────┬───────────────────┘
+                                  ▼
+                            Fusion (HybridRetriever)
+        union candidates; normalize; weighted blend with
+        Memory-Intelligence boost + Recency boost
+                                  │
+                                  ▼
+                         Reranking (Reranker port)
+              SimpleCrossEncoderReranker (lexical-overlap heuristic;
+              swappable for Cohere / BGE / cross-encoder)
+                                  │
+                                  ▼
+                      Results (top_k)  /  Debug (all + breakdown)
+```
+
+The vector and keyword stages run **concurrently** (`asyncio.gather`), each on its
+own Unit of Work, so fusion waits only on the slower of the two.
+
+### 13.3 Scoring formula & weighting strategy
+
+```
+final = w_vector·vector_score
+      + w_bm25·bm25_score
+      + w_memory·memory_score
+      + w_recency·recency_score
+```
+
+Defaults: **vector 0.50, bm25 0.20, memory 0.20, recency 0.10** — semantic
+similarity leads (it generalizes beyond exact words), lexical matching anchors
+exact terms/IDs, and the memory/recency boosts act as tie-breakers that let
+high-value or fresh memories win close calls. All weights live in
+`RetrievalConfig` and are injected, so they can be tuned per environment/tenant.
+
+Per-signal definitions (each normalized to [0, 1] before weighting):
+
+- **vector_score** — cosine(query, memory embedding), clamped to [0, 1].
+- **bm25_score** — Okapi BM25 over content + metadata, **min-max normalized** across the candidate set (so it is comparable to the other signals regardless of corpus scale).
+- **memory_score** — `(0.4·importance + 0.3·utility + 0.3·frequency)` plus a promotion bonus (+0.15) and a priority bonus (up to +0.10), clamped to [0, 1]. This is where **Memory Intelligence (Stage 5)** boosts ranking.
+- **recency_score** — exponential decay `0.5^(age_days / half_life)` (default half-life 30 days) over `updated_at`.
+
+**Reranking** then multiplies the fused score by `(1 + overlap_weight · lexical_overlap)` and re-sorts — a cheap, deterministic stand-in until a learned cross-encoder is plugged in behind the `Reranker` port.
+
+### 13.4 Candidate union & normalization
+
+Vector and keyword retrievers each return up to `candidate_pool` (default 50)
+hits; fusion takes their **union** by memory id. A memory found only by vector
+gets `bm25_score = 0`; one found only by BM25 gets `vector_score = 0`. BM25 is
+min-max normalized within the union so a large lexical score cannot dwarf the
+bounded [0,1] signals. Default filters restrict to `ACTIVE` memories unless the
+query overrides `statuses`.
+
+### 13.5 API
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| POST | `/api/v1/retrieval/search` | ranked top_k results |
+| POST | `/api/v1/retrieval/debug` | every reranked candidate with the full `ScoreBreakdown` (vector, bm25, memory, recency, final) |
+
+### 13.6 Production note (pgvector)
+
+`VectorRetriever` scores cosine over candidates fetched via the repository port.
+At small/medium scale this is exact and simple; at large scale the
+`list_candidates` port is the seam to push the search into a **pgvector ANN
+index** (`ORDER BY embedding <=> :q LIMIT k`) without changing the retriever,
+fusion, or service.
+
+### 13.7 Test results
+
+`151 passed` (target 140+). New in Stage 7:
+
+- **Scoring** — cosine (identical/orthogonal/opposite/degenerate), recency decay, memory boost (promotion + priority), filters.
+- **BM25** — tokenization, match vs. no-match, term-frequency ranking, empty edge cases.
+- **Reranker** — overlap boost reorders, empty query preserves order, breakdown updated.
+- **Vector / Keyword retrievers** — semantic closest first, metadata search, limits, filters.
+- **Hybrid fusion** — relevant-first, candidate union, weight changes alter ranking.
+- **Retrieval service** — end-to-end search (top_k + relevant first), debug (all + breakdown).
+- **API** — search/debug envelopes, score breakdown exposed, empty-query 422, filters accepted.
+
+*Stage 8 would add the LangGraph extraction/consolidation workflows and (separately) Neo4j graph traversal — building on this retrieval layer to assemble context, still without RAG response generation unless explicitly scoped.*

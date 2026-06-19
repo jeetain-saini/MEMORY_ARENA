@@ -17,7 +17,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
+from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.retrieval.config import RetrievalConfig
+from app.application.services.retrieval.hybrid_retriever import HybridRetriever
+from app.application.services.retrieval.keyword_retriever import KeywordRetriever
+from app.application.services.retrieval.reranker import SimpleCrossEncoderReranker
+from app.application.services.retrieval.retrieval_service import MemoryRetrievalService
+from app.application.services.retrieval.vector_retriever import VectorRetriever
 from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
 from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
@@ -107,6 +114,37 @@ def get_memory_analytics_service(
     return MemoryAnalyticsService(uow)
 
 
+def get_retrieval_config() -> RetrievalConfig:
+    """Provide the (tunable) hybrid-retrieval weights. Defaults for now."""
+    return RetrievalConfig()
+
+
+def get_reranker(
+    config: RetrievalConfig = Depends(get_retrieval_config),
+) -> Reranker:
+    """Provide the reranker (heuristic cross-encoder for now)."""
+    return SimpleCrossEncoderReranker(overlap_weight=config.rerank_overlap_weight)
+
+
+def get_memory_retrieval_service(
+    provider: EmbeddingProvider = Depends(get_embedding_provider),
+    config: RetrievalConfig = Depends(get_retrieval_config),
+    reranker: Reranker = Depends(get_reranker),
+) -> MemoryRetrievalService:
+    """Assemble the hybrid retrieval pipeline for a request.
+
+    Retrievers receive a Unit-of-Work *factory* (not a shared instance) so the
+    vector and keyword stages can run concurrently, each on its own session.
+    """
+    def uow_factory() -> UnitOfWork:
+        return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+    vector = VectorRetriever(uow_factory, provider)
+    keyword = KeywordRetriever(uow_factory, config)
+    hybrid = HybridRetriever(vector, keyword, config)
+    return MemoryRetrievalService(hybrid, reranker)
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
@@ -118,3 +156,4 @@ MemoryServiceDep = Depends(get_memory_service)
 MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
 MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
 EmbeddingProviderDep = Depends(get_embedding_provider)
+MemoryRetrievalServiceDep = Depends(get_memory_retrieval_service)

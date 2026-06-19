@@ -1,0 +1,73 @@
+"""Repository ports (interfaces) for the memory domain.
+
+These abstract base classes are the PORTS the application depends on. They
+speak purely in domain entities and DTOs; they say nothing about Postgres,
+Neo4j, or Redis. Concrete adapters in ``app.repositories`` (Stage 3) implement
+them, and the API composition root injects those implementations.
+
+Methods are async because every real implementation performs I/O. No
+implementation lives here — Stage 2 is contracts only.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from uuid import UUID
+
+from app.application.dto.memory_dto import MemorySearchRequest
+from app.domain.entities.memory import Memory
+from app.domain.entities.memory_relation import MemoryRelation
+from app.domain.entities.memory_version import MemoryVersion
+
+
+class MemoryRepository(ABC):
+    """Persistence port for the Memory aggregate."""
+
+    @abstractmethod
+    async def save(self, memory: Memory) -> Memory: ...
+
+    @abstractmethod
+    async def get_by_id(self, memory_id: UUID) -> Memory | None: ...
+
+    @abstractmethod
+    async def update(self, memory: Memory) -> Memory: ...
+
+    @abstractmethod
+    async def delete(self, memory_id: UUID) -> None: ...
+
+    @abstractmethod
+    async def search(self, request: MemorySearchRequest) -> list[Memory]: ...
+
+    @abstractmethod
+    async def list_by_user(
+        self, user_id: UUID, *, limit: int = 20, offset: int = 0
+    ) -> list[Memory]: ...
+
+
+class MemoryRelationRepository(ABC):
+    """Persistence port for edges in the memory graph."""
+
+    @abstractmethod
+    async def save(self, relation: MemoryRelation) -> MemoryRelation: ...
+
+    @abstractmethod
+    async def get_by_id(self, relation_id: UUID) -> MemoryRelation | None: ...
+
+    @abstractmethod
+    async def delete(self, relation_id: UUID) -> None: ...
+
+    @abstractmethod
+    async def list_for_memory(self, memory_id: UUID) -> list[MemoryRelation]: ...
+
+
+class MemoryVersionRepository(ABC):
+    """Append-only history port for memory versions."""
+
+    @abstractmethod
+    async def save(self, version: MemoryVersion) -> MemoryVersion: ...
+
+    @abstractmethod
+    async def list_for_memory(self, memory_id: UUID) -> list[MemoryVersion]: ...
+
+    @abstractmethod
+    async def get_version(self, memory_id: UUID, version_number: int) -> MemoryVersion | None: ...

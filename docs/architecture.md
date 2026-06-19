@@ -357,4 +357,121 @@ lifespan shutdown (reverse order)
    12. postgres_manager.disconnect()
 ```
 
-*Stage 2 begins filling the domain layer and the memory ingestion use cases.*
+*Stage 2 fills the domain layer.*
+
+---
+
+## 8. Stage 2 — Core Domain Model (Self-Evolving Memory)
+
+Stage 2 implements the **domain language** of MemoryArena: pure-Python entities, value objects, events, exceptions, and the application contracts (DTOs, use-case interfaces, repository ports) that surround them. It contains **no infrastructure, no databases, no APIs, no LangGraph** — the domain layer imports only the standard library and itself.
+
+### 8.1 New files
+
+```
+backend/app/
+├── domain/
+│   ├── value_objects/
+│   │   ├── memory_type.py          # MemoryType enum (FACT, GOAL, PREFERENCE, SKILL, PROJECT, EXPERIENCE)
+│   │   ├── memory_status.py        # MemoryStatus enum + legal transition table
+│   │   └── relation_type.py        # RelationType enum (RELATED_TO, DEPENDS_ON, ...)
+│   ├── entities/
+│   │   ├── memory.py               # Memory aggregate root (state transitions + events)
+│   │   ├── memory_score.py         # MemoryScore value object (weighted total)
+│   │   ├── memory_relation.py      # MemoryRelation edge entity
+│   │   └── memory_version.py       # MemoryVersion immutable snapshot
+│   ├── events/
+│   │   └── memory_events.py        # MemoryCreated/Updated/Archived/Deleted/Promoted
+│   └── exceptions/
+│       └── errors.py               # DomainError hierarchy
+├── application/
+│   ├── dto/memory_dto.py           # Create/Update/Search request + response DTOs
+│   ├── use_cases/memory_use_cases.py   # Create/Update/Delete/Search use-case interfaces
+│   └── interfaces/repositories.py  # Memory / Relation / Version repository PORTS
+└── tests/unit/
+    ├── test_memory_score.py        # score math + reinforcement + promotion threshold
+    ├── test_memory_entity.py       # transitions, events, validation
+    ├── test_memory_relation.py     # edge creation + invariants
+    └── test_memory_version.py      # snapshot + rollback
+```
+
+### 8.2 Domain model diagram
+
+```
+                         ┌──────────────────────────────────────────┐
+                         │                 Memory                    │  «aggregate root»
+                         │  id · user_id · content                   │
+                         │  memory_type : MemoryType  ───────────────┼──▶ «enum» MemoryType
+                         │  status      : MemoryStatus ──────────────┼──▶ «enum» MemoryStatus
+                         │  score       : MemoryScore                │      (owns transition table)
+                         │  version · is_promoted                    │
+                         │  created_at · updated_at · metadata       │
+                         │  _events : [DomainEvent]                  │
+                         └───────┬───────────────┬──────────────┬────┘
+                  composes 1     │               │ records *    │ snapshots *
+                                 ▼               ▼              ▼
+                     ┌────────────────┐  ┌──────────────┐  ┌─────────────────┐
+                     │  MemoryScore   │  │ DomainEvent  │  │  MemoryVersion  │ «frozen»
+                     │ «frozen VO»    │  │  (frozen)    │  │ memory_id       │
+                     │ importance     │  ├──────────────┤  │ version_number  │
+                     │ utility        │  │ MemoryCreated│  │ content/type    │
+                     │ frequency      │  │ MemoryUpdated│  │ status/metadata │
+                     │ recency        │  │ MemoryArchiv.│  │ reason          │
+                     │ confidence     │  │ MemoryDeleted│  └─────────────────┘
+                     │ +total_score() │  │ MemoryPromot.│
+                     └────────────────┘  └──────────────┘
+
+         ┌───────────────────────────────────────────────────────────────┐
+         │                       MemoryRelation                           │
+         │  source_memory_id ──(relation_type: RelationType)──▶ target_id  │
+         │  weight ∈ [0,1] · metadata                                      │
+         └───────────────────────────────────────────────────────────────┘
+
+   total_score = 0.30·importance + 0.25·utility + 0.20·frequency
+               + 0.15·recency   + 0.10·confidence          (weights Σ = 1.0 ⇒ normalized)
+```
+
+### 8.3 Memory lifecycle
+
+```
+   Created      Memory.create()           → MemoryCreated      status=ACTIVE, v1
+      │
+      ▼
+   Scored       MemoryScore.calculate_total_score()            (computed, not a state)
+      │
+      ▼
+   Linked       MemoryRelation.create(... RELATED_TO/DEPENDS_ON/DERIVED_FROM ...)
+      │
+      ▼
+   Reinforced   Memory.reinforce()        → score.reinforced() (frequency↑, recency→1.0)
+      │
+      ▼
+   Promoted     Memory.promote()          → MemoryPromoted     is_promoted=True
+      │                                     (requires ACTIVE + score ≥ threshold 0.65)
+      ▼
+   Archived     Memory.archive()          → MemoryArchived     ACTIVE → ARCHIVED
+      │                                     (ARCHIVED → ACTIVE via restore())
+      ▼
+   Deleted      Memory.delete()           → MemoryDeleted      → DELETED (terminal)
+```
+
+Legal status transitions are owned by `MemoryStatus.can_transition_to`: `ACTIVE→{ARCHIVED,DELETED}`, `ARCHIVED→{ACTIVE,DELETED}`, `DELETED→∅`. Any illegal move raises `InvalidMemoryStateError`.
+
+### 8.4 Design decisions
+
+- **Aggregate root + event recording.** `Memory` is the single entry point for state changes; each behavior validates invariants and appends a `DomainEvent` to an internal buffer. The application pulls events (`pull_events`) after the unit of work commits and dispatches them — this is the seam for an outbox/queue later, with zero domain coupling to consumers.
+- **Score as an immutable value object.** Evolution produces a *new* `MemoryScore` (`reinforced`, `decayed`) instead of mutating, so every change is explicit and traceable. The weights live as `ClassVar`s and sum to exactly 1.0, which makes the total mathematically guaranteed to be normalized in [0,1].
+- **Status owns its own transition table.** Lifecycle rules live in one value object, not scattered across services — a single, testable source of truth.
+- **Versions are frozen snapshots.** History must not change; `MemoryVersion.capture()` deep-copies mutable metadata so the past is immutable, and `Memory.rollback_to()` is itself a forward-versioned change (full audit trail).
+- **Relations are entities, not attributes.** Edges carry identity and a `weight`, because the graph itself self-evolves (reinforced, weakened, contradicted).
+- **Ports speak only domain.** Repository and use-case interfaces reference entities/DTOs and `async` I/O signatures, never a concrete store — preserving the dependency rule.
+- **No pydantic in domain/DTOs.** Domain entities and application DTOs are plain dataclasses; pydantic stays at the API boundary. The domain has **zero** third-party imports.
+
+### 8.5 Future extension points
+
+- **New memory types / relation types** — extend the enums; scoring and graph logic are type-agnostic.
+- **Pluggable scoring** — the weighted formula is isolated in `MemoryScore`; alternative strategies (learned weights, per-type weights) can be introduced behind the same `calculate_total_score()` contract.
+- **Time-based decay** — `MemoryScore.decayed()` defines *how* decay transforms a score; a Stage 5 scheduler decides *when* to apply it.
+- **Consolidation & contradiction handling** — `CONTRADICTS` edges + domain events are the hooks for a future LangGraph consolidation workflow to merge/reconcile memories.
+- **Event-driven side effects** — the recorded events enable an outbox → queue → graph-sync pipeline without touching the domain.
+
+*Stage 3 implements the repositories and the concrete use cases against the infrastructure managers from Stage 1.*

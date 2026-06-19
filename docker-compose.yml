@@ -79,26 +79,32 @@ services:
       - memoryarena-net
 
   # ---------------------------------------------------------------------------
-  # Backend (FastAPI) — enabled in Stage 1 once app/main.py exposes an ASGI app.
+  # Backend (FastAPI) — Stage 1 application foundation.
   # ---------------------------------------------------------------------------
-  # backend:
-  #   build:
-  #     context: ./backend
-  #     dockerfile: ../infrastructure/docker/backend/Dockerfile
-  #   container_name: memoryarena-backend
-  #   restart: unless-stopped
-  #   env_file: .env
-  #   ports:
-  #     - "${APP_PORT:-8000}:8000"
-  #   depends_on:
-  #     postgres:
-  #       condition: service_healthy
-  #     neo4j:
-  #       condition: service_healthy
-  #     redis:
-  #       condition: service_healthy
-  #   networks:
-  #     - memoryarena-net
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../infrastructure/docker/backend/Dockerfile
+    container_name: memoryarena-backend
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      neo4j:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    networks:
+      - memoryarena-net
 
   # ---------------------------------------------------------------------------
   # Frontend (Next.js) — enabled in Stage 4.

@@ -1,6 +1,5 @@
 # =============================================================================
 # MemoryArena Backend image (Python 3.12) — multi-stage for a slim runtime.
-# Stage 0: build recipe defined; the CMD will resolve once app/main.py exists.
 # Build context is ./backend (see docker-compose.yml).
 # =============================================================================
 
@@ -15,11 +14,16 @@ RUN pip install --upgrade pip && pip install --prefix=/install .
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
-# Run as an unprivileged user.
-RUN useradd --create-home --uid 1000 appuser
+# curl is used by the container HEALTHCHECK below.
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 appuser
 COPY --from=builder /install /usr/local
 COPY . .
 USER appuser
 EXPOSE 8000
-# Stage 1 entrypoint:
-# CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://localhost:8000/api/v1/health || exit 1
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

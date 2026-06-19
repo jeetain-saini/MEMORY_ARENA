@@ -35,17 +35,34 @@ dev = [
   "pytest-asyncio>=0.24",
   "httpx>=0.27",
   "ruff>=0.7",
+  "black>=24.10",
+  "isort>=5.13",
   "mypy>=1.13",
 ]
 
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["app"]
+src = ["app", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "C4", "SIM", "ASYNC"]
+ignore = ["E501"]  # line length handled by Black
+
+[tool.black]
+target-version = ["py312"]
+line-length = 100
+
+[tool.isort]
+profile = "black"
+line_length = 100
+src_paths = ["app", "tests"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
+warn_unused_ignores = true
+warn_redundant_casts = true
 plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]

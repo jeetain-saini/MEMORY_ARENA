@@ -251,4 +251,110 @@ Architecture choices made now so scale is an evolution, not a rewrite:
 
 ---
 
-*Stage 0 establishes the skeleton these invariants protect. Stage 1 begins filling the domain layer.*
+*Stage 0 establishes the skeleton these invariants protect.*
+
+---
+
+## 7. Stage 1 — Backend Foundation (Bootstrap & Infrastructure)
+
+Stage 1 makes the backend a running, observable, production-ready service — **without any memory logic, LangGraph, embeddings, or repositories**. It delivers the application bootstrap, configuration, structured logging, datastore connectivity, health monitoring, dependency injection, error handling, and container/dev tooling.
+
+### 7.1 New files
+
+```
+backend/app/
+├── main.py                                  # App factory + startup/shutdown lifecycle
+├── core/
+│   ├── config.py                            # Pydantic Settings (typed, validated)
+│   ├── logging.py                           # JSON logging + correlation-id middleware
+│   └── exceptions.py                        # AppException + global exception handlers
+├── schemas/
+│   └── responses.py                         # Standardized APIResponse / ErrorResponse
+├── infrastructure/
+│   ├── database/postgres.py                 # PostgresManager (async SQLAlchemy engine)
+│   ├── cache/redis.py                       # RedisManager (async client + pool)
+│   └── graph/neo4j.py                       # Neo4jManager (async driver)
+└── api/v1/
+    ├── router.py                            # Aggregate v1 router
+    ├── routes/health.py                     # GET /health, GET /version
+    └── dependencies/providers.py            # DI providers (settings, db, redis, neo4j)
+
+backend/tests/unit/test_config.py            # Settings validation tests
+```
+
+Updated: `pyproject.toml` (Ruff/Black/isort/mypy), `infrastructure/docker/backend/Dockerfile` (entrypoint + HEALTHCHECK), `docker-compose.yml` (backend service enabled), `.env.example` (canonical variable names).
+
+### 7.2 Configuration management
+
+A single `Settings` object (Pydantic Settings) is the **only** way runtime values enter the system. It is loaded once and cached via `get_settings()` (an `lru_cache`), so one immutable, validated instance is shared process-wide. Validation runs at boot — a missing `POSTGRES_URL`, a too-short `JWT_SECRET`, or a leftover `change-me` secret aborts startup rather than failing mid-request. Field names map case-insensitively to env vars (`postgres_url` ← `POSTGRES_URL`).
+
+### 7.3 Structured logging & correlation IDs
+
+`configure_logging()` installs a `JsonFormatter` on the root logger and routes uvicorn's loggers through it, so **every** line is a single JSON object. `RequestContextLogMiddleware` mints a correlation ID per request (honoring an inbound `X-Request-ID`), stores it in a `ContextVar`, logs `request.start` / `request.finish` with millisecond timing, and echoes the ID in the response header. Because the ID lives in a `ContextVar`, *any* log emitted while serving the request is auto-stamped — no manual threading.
+
+### 7.4 Infrastructure architecture — connection managers as singletons
+
+Each datastore gets a manager class (`PostgresManager`, `RedisManager`, `Neo4jManager`) instantiated **once** as a module-level singleton. The rationale: each underlying client already owns a connection *pool*, so the expensive, shareable object is the engine/client/driver itself. Each manager exposes the same lifecycle contract:
+
+| Method | Responsibility |
+| --- | --- |
+| `connect(settings)` | Idempotently build the pooled client; Neo4j additionally verifies connectivity (fail fast). |
+| `disconnect()` | Gracefully dispose the pool. |
+| `health_check()` | Cheap liveness probe (`SELECT 1` / `PING` / `RETURN 1`) that **never raises** — it returns `False` so the health endpoint stays up even when a dependency is down. |
+
+```
+        ┌──────────────────────── FastAPI app ────────────────────────┐
+        │  api/v1/dependencies/providers.py   (composition root, read) │
+        │     get_db_session ─┐   get_redis ─┐   get_neo4j ─┐          │
+        └─────────────────────┼──────────────┼─────────────┼──────────┘
+                              ▼              ▼             ▼
+                     PostgresManager   RedisManager   Neo4jManager   (singletons)
+                              │              │             │
+                         async pool     async pool     driver pool
+                              ▼              ▼             ▼
+                        PostgreSQL        Redis          Neo4j
+```
+
+### 7.5 Dependency injection flow
+
+The composition root has two halves. **Write side** (`main.py` lifespan): on startup the singletons are `connect`-ed; on shutdown they are `disconnect`-ed in reverse order. **Read side** (`providers.py`): thin `Depends(...)` functions hand the live client (or a request-scoped DB session) to route handlers. Handlers ask for *what they need*, never construct it, and can be tested by overriding the provider — preserving the dependency rule end-to-end.
+
+### 7.6 Health monitoring
+
+`GET /api/v1/health` probes all three datastores **concurrently** (`asyncio.gather`) and returns `{ "status", "postgres", "redis", "neo4j" }` — HTTP 200 when all are `up`, HTTP 503 when any is `down`, so orchestrators (Docker/K8s) can gate traffic on readiness. `GET /api/v1/version` returns service name, version, and environment.
+
+### 7.7 Error handling
+
+`register_exception_handlers()` installs handlers for `AppException` (deliberate errors carrying an HTTP status + stable code), `RequestValidationError` (422 with field details), `StarletteHTTPException`, and a catch-all `Exception` that logs the full trace server-side but returns a generic message — internals never leak. Every error is emitted in the standardized `ErrorResponse` envelope, stamped with the correlation ID.
+
+### 7.8 Startup sequence
+
+```
+uvicorn app.main:app
+        │
+        ▼
+create_app()
+   1. get_settings()              ── load & validate env (fail fast)
+   2. configure_logging(level)    ── install JSON formatter
+   3. FastAPI(lifespan=...)       ── docs gated by environment
+   4. add CORS + RequestContext middleware
+   5. register_exception_handlers
+   6. include_router(api_router, prefix="/api/v1")
+        │
+        ▼
+lifespan startup  (on first request / server boot)
+   7. postgres_manager.connect(settings)
+   8. redis_manager.connect(settings)
+   9. neo4j_manager.connect(settings)   ── verify_connectivity()
+        │
+        ▼
+   ── SERVING ──  (GET /api/v1/health reports up/up/up)
+        │
+        ▼
+lifespan shutdown (reverse order)
+   10. neo4j_manager.disconnect()
+   11. redis_manager.disconnect()
+   12. postgres_manager.disconnect()
+```
+
+*Stage 2 begins filling the domain layer and the memory ingestion use cases.*

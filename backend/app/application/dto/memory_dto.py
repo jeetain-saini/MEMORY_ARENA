@@ -23,6 +23,11 @@ class CreateMemoryRequest:
     content: str
     memory_type: MemoryType
     metadata: dict[str, Any] = field(default_factory=dict)
+    # Optional initial score signals (e.g. from the extraction workflow). When
+    # provided, the create use case seeds the memory's MemoryScore with them;
+    # when None, the memory starts at MemoryScore.neutral() (unchanged default).
+    importance: float | None = None
+    confidence: float | None = None
 
 
 @dataclass(frozen=True)

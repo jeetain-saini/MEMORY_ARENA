@@ -27,6 +27,7 @@ from app.application.use_cases.memory_use_cases import (
     UpdateMemoryUseCase,
 )
 from app.domain.entities.memory import Memory
+from app.domain.entities.memory_score import MemoryScore
 from app.domain.entities.memory_version import MemoryVersion
 
 
@@ -41,6 +42,7 @@ class CreateMemoryUseCaseImpl(CreateMemoryUseCase):
             content=request.content,
             memory_type=request.memory_type,
             metadata=request.metadata,
+            score=_initial_score(request),
         )
         async with self._uow as uow:
             await uow.memories.save(memory)
@@ -102,3 +104,19 @@ class SearchMemoryUseCaseImpl(SearchMemoryUseCase):
         async with self._uow as uow:
             memories = await uow.memories.search(request)
         return [memory_to_response(m) for m in memories]
+
+
+def _initial_score(request: CreateMemoryRequest) -> MemoryScore | None:
+    """Seed a score from optional importance/confidence signals.
+
+    Returns ``None`` (→ ``MemoryScore.neutral()``) when neither is supplied, so
+    the default create behavior is unchanged. Unsupplied components fall back to
+    the neutral defaults on ``MemoryScore``.
+    """
+    if request.importance is None and request.confidence is None:
+        return None
+    neutral = MemoryScore.neutral()
+    return MemoryScore(
+        importance=request.importance if request.importance is not None else neutral.importance,
+        confidence=request.confidence if request.confidence is not None else neutral.confidence,
+    )

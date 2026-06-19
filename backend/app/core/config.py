@@ -60,9 +60,16 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     neo4j_max_connection_pool_size: int = 50
 
-    # --- LLM providers (optional; no LLM chat calls) ----------------------
+    # --- LLM providers ----------------------------------------------------
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+    # Provider selection for the extraction workflow: "deterministic" (offline
+    # default; dev/tests), "openai", or "anthropic".
+    llm_provider: str = "deterministic"
+    llm_model: str = "gpt-4o-mini"
+    # Extraction workflow engine: "sequential" (offline default, no LangGraph)
+    # or "langgraph" (production; requires the langgraph package).
+    workflow_engine: str = "sequential"
 
     # --- Embeddings -------------------------------------------------------
     # Provider selection: "hash" (deterministic, dependency-free dev default),

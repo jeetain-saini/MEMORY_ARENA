@@ -6,12 +6,14 @@
 > behavior, the decisions made and *why*, the known gaps, and the rules a future
 > contributor must follow to **continue** the architecture rather than redesign it.
 >
-> **Status at handoff:** Stages 0–9 are complete and verified. Stage 9 (Knowledge
-> Graph) is finished: background event-driven sync, bounded edge derivation,
-> stale-edge removal, filtered graph-aware expansion, full integration tests, and
-> a live-Neo4j suite (skipped when no server). **Test suite: `219 passing,
-> 4 skipped`** (PyTest; the 4 skips are the live-Neo4j tests). The companion
-> deep-dive lives in [`docs/architecture.md`](architecture.md) (sections §1–§15).
+> **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phase 1
+> (LangGraph Memory Extraction) complete**. Raw text → extraction workflow →
+> `CreateMemoryUseCase` → events → embeddings + graph, behind an `LLMProvider`
+> port (deterministic offline default) and a `WorkflowEngine` port (sequential
+> offline default; LangGraph in production). **Test suite: `243 passing,
+> 5 skipped`** (PyTest; skips are live-Neo4j + the LangGraph-engine suite, which
+> skip when those deps/servers are unavailable). The companion deep-dive lives in
+> [`docs/architecture.md`](architecture.md) (sections §1–§16).
 
 ---
 
@@ -54,7 +56,8 @@ intelligence.
 | Vector-only retrieval | **Hybrid fusion**: vector + BM25 + memory-score + recency, then **reranking** |
 | No relationships | **Knowledge graph** of typed edges + **graph expansion** |
 | Prompt = concatenation | **Context Assembly**: selection, **consolidation** (dedupe), **conflict detection**, **compression**, strict token budget |
-| Framework-coupled | **Clean Architecture** — domain knows nothing of frameworks |
+| Framework-coupled | **Clean Architecture** — do
+main knows nothing of frameworks |
 
 ---
 
@@ -174,6 +177,13 @@ place where abstract ports are bound to concrete adapters via FastAPI `Depends`.
 - **Components:** `GraphRepository` port; `InMemoryGraphRepository` (offline default) + `Neo4jGraphRepository`; `GraphRelationshipService` (derives RELATED_TO/SUPPORTS/USED_IN); `GraphTraversalService`; `GraphSyncService` + `GraphEventHandler` driving an async `GraphJobProcessor` (`InProcessGraphJobProcessor`, drained on shutdown); `GraphAwareRetrievalService` (hybrid → filtered graph expansion with provenance tags); endpoints `/graph/search|traverse|memory/{id}|debug`.
 - **Decisions:** graph sync runs **off the request path** via a background job processor (mirrors the embedding pipeline); edge derivation is **bounded** to the most recent `max_sync_candidates` memories (O(K), not O(N²)); every sync **re-derives** edges (stale edges removed first); expansion is filtered by an **edge-type allowlist** (excludes `CONTRADICTS`), **tenant** (user_id), and **status** (ACTIVE).
 - **Tests:** unit (repo/relationship/traversal) + integration (sync, events, graph-aware retrieval, API) + live-Neo4j (skipped when no server).
+
+### Stage 10 — LangGraph Memory Extraction *(Phase 1 complete)*
+- **Purpose:** Raw conversation/document text → structured memories, via a LangGraph workflow, entering through the existing single write path.
+- **Components:** `LLMProvider` port + `Deterministic`(offline default)/`OpenAI`/`Anthropic` adapters + factory; `WorkflowEngine` port + shared `extraction_steps` (signal→extract→classify→importance→confidence→validate) + `SequentialExtractionEngine` (offline default) and `LangGraphExtractionEngine` (lazy `langgraph`); `WorkflowJobProcessor` + `InProcessWorkflowJobProcessor`; `IngestMemoryUseCase` (→ `CreateMemoryUseCase`); `POST /api/v1/ingest` (202). `CreateMemoryRequest` gained optional `importance`/`confidence` (additive).
+- **Decisions:** LangGraph is a driver confined to `infrastructure/llm/` (lazy import); workflow returns **DTOs only** and never touches repositories/DB/embeddings/Neo4j; all writes go through `CreateMemoryUseCase` so events drive embeddings + graph; async background execution (drained on shutdown); `ExtractionResult.workflow_version` traces workflow generations; offline-first (deterministic provider + sequential engine).
+- **Scope:** extraction only — **no** chat agent, RAG runtime, query-time workflow, consolidation, or LLM compressor.
+- **Tests:** unit (provider, workflow, job processor) + integration (ingest use case end-to-end → embeddings + graph; `/ingest` API) + LangGraph-engine suite (skipped when `langgraph` absent).
 
 ---
 
@@ -594,7 +604,7 @@ regress the count.
   unit + integration tests, and a live-Neo4j suite (skipped when no server) all
   in place. Default backend remains in-memory (offline-first); the Neo4j path is
   exercised by the live suite when a server is available.
-- **No LangGraph workflows** — `infrastructure/llm/{graphs,chains}` are empty placeholders.
+- **LangGraph: extraction only (Stage 10 Phase 1).** The extraction workflow exists in `infrastructure/llm/graphs`; consolidation/conflict-resolution, the LLM compressor, and any query-time agent/RAG runtime are **not** built (later phases). `infrastructure/llm/chains` is still an empty placeholder.
 - **No LLM-based context compression** — only the heuristic compressor; `LLMCompressor` is a future port impl.
 - **No agent runtime / chat generation / RAG response** — by design; out of scope so far.
 - **No background scheduler implementation** — only the `Scheduler` ports; decay/archival/promotion sweeps are manual/API-triggered.

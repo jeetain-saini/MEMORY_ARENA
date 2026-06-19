@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from fastapi import Depends
+from fastapi import Depends, Request
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.interfaces.workflow_job_processor import WorkflowJobProcessor
 from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
 from app.application.services.graph.traversal_service import GraphTraversalService
@@ -182,6 +183,16 @@ def get_graph_aware_retrieval_service(
     return GraphAwareRetrievalService(retrieval_service, repository, config)
 
 
+def get_workflow_processor(request: Request) -> WorkflowJobProcessor:
+    """Provide the workflow job processor wired in the app lifespan.
+
+    Read from ``app.state`` (set on startup) so the ingest endpoint can submit
+    jobs without constructing the background machinery itself. Overridable in
+    tests via the standard dependency-override mechanism.
+    """
+    return request.app.state.workflow_processor
+
+
 def get_context_config() -> ContextConfig:
     """Provide the (tunable) context-assembly configuration."""
     return ContextConfig()
@@ -218,3 +229,4 @@ ContextBuilderServiceDep = Depends(get_context_builder_service)
 GraphRepositoryDep = Depends(get_graph_repository)
 GraphTraversalServiceDep = Depends(get_graph_traversal_service)
 GraphAwareRetrievalServiceDep = Depends(get_graph_aware_retrieval_service)
+WorkflowProcessorDep = Depends(get_workflow_processor)

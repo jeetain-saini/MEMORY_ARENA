@@ -26,6 +26,7 @@ from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.event_handler import GraphEventHandler
 from app.application.services.graph.relationship_service import GraphRelationshipService
 from app.application.services.graph.sync_service import GraphSyncService
+from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
@@ -38,6 +39,8 @@ from app.infrastructure.events.in_process_dispatcher import in_process_dispatche
 from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.in_process_processor import InProcessGraphJobProcessor
 from app.infrastructure.graph.neo4j import neo4j_manager
+from app.infrastructure.llm.graphs.factory import build_workflow_engine
+from app.infrastructure.llm.in_process_workflow_processor import InProcessWorkflowJobProcessor
 
 _logger = logging.getLogger("memoryarena.lifecycle")
 
@@ -75,6 +78,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     graph_processor = InProcessGraphJobProcessor(graph_sync.process)
     GraphEventHandler(graph_processor).register(in_process_dispatcher)
     app.state.graph_processor = graph_processor
+
+    # --- Wire the async memory-extraction (ingestion) pipeline -----------
+    # The ingest use case creates memories through the single write path, so
+    # MemoryCreated events drive the embedding + graph pipelines above. Runs on
+    # a background processor (drained on shutdown); offline default engine is
+    # sequential (no LangGraph dependency).
+    ingest_use_case = IngestMemoryUseCaseImpl(
+        engine=build_workflow_engine(),
+        uow_factory=lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+        dispatcher=in_process_dispatcher,
+    )
+    workflow_processor = InProcessWorkflowJobProcessor(ingest_use_case.process)
+    app.state.workflow_processor = workflow_processor
     _logger.info("startup.complete")
 
     try:
@@ -84,6 +100,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         _logger.info("shutdown.begin")
         await embedding_processor.drain()
         await graph_processor.drain()
+        await workflow_processor.drain()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()
         await postgres_manager.disconnect()

@@ -1312,5 +1312,106 @@ API, and a **live Neo4j** suite that **skips when no server is reachable** (so
 offline CI stays green). The Neo4j path is verified against a real server via
 `docker compose up neo4j`.
 
-*Stage 10 introduces the LangGraph agent runtime (extraction/consolidation
-workflows) on top of this graph and the Stage 8 context package.*
+*Stage 10 (Phase 1, below) adds the LangGraph **memory extraction** workflow on
+top of this graph and the Stage 8 context package.*
+
+---
+
+## 16. Stage 10 (Phase 1) — LangGraph Memory Extraction
+
+Stage 10 Phase 1 turns **raw conversation/document text into structured memories**
+via a LangGraph workflow. It is **extraction ingestion only** — **not** a chat
+agent, RAG runtime, query-time workflow, consolidation workflow, or LLM
+compressor (those are later phases). The workflow produces **DTOs**; every memory
+is then created through the existing `CreateMemoryUseCase`, so embeddings and
+graph sync follow automatically.
+
+```
+   Conversation / document text
+            │  POST /api/v1/ingest  -> 202 + job_id (async)
+            ▼
+   LangGraph Extraction Workflow  (infrastructure/llm/graphs)
+     signal detection → candidate extraction → type classification
+        → importance estimation → confidence estimation → validation
+            │  List[ExtractedMemory]  (DTOs only — no LangGraph type escapes)
+            ▼
+   IngestMemoryUseCase  ──per memory──▶  CreateMemoryUseCase   (the single write path)
+            │                                   │  commit → MemoryCreated
+            ▼                                   ▼
+        IngestSummary                     Domain Events
+                                                │
+                                  ┌─────────────┴─────────────┐
+                                  ▼                           ▼
+                         Embedding pipeline            Graph sync
+                         (pgvector)                    (Neo4j / in-memory)
+```
+
+### 16.1 Files
+
+```
+backend/app/
+├── application/
+│   ├── interfaces/
+│   │   ├── llm_provider.py              # LLMProvider port (generate / structured_generate)
+│   │   ├── workflow_engine.py           # WorkflowEngine port (extract_memories -> ExtractionResult)
+│   │   └── workflow_job_processor.py    # WorkflowJobProcessor port + WorkflowJob
+│   ├── dto/extraction_dto.py            # ExtractionRequest, ExtractedMemory, ExtractionResult, IngestSummary
+│   └── use_cases/ingest_memory_use_cases.py(+_impl)   # IngestMemoryUseCase -> CreateMemoryUseCase
+├── infrastructure/llm/
+│   ├── providers/{deterministic,openai,anthropic}_provider.py + factory.py
+│   ├── graphs/extraction_steps.py       # 6 shared steps + ExtractionState + WORKFLOW_VERSION
+│   ├── graphs/sequential_engine.py      # offline default engine (no LangGraph)
+│   ├── graphs/extraction_graph.py       # LangGraphExtractionEngine (lazy `import langgraph`)
+│   ├── graphs/factory.py                # engine selection (WORKFLOW_ENGINE)
+│   └── in_process_workflow_processor.py # InProcessWorkflowJobProcessor (async, drainable)
+├── schemas/ingest.py                    # IngestRequestSchema / IngestAcceptedSchema
+└── api/v1/routes/ingest.py              # POST /ingest (202 Accepted)
+```
+
+### 16.2 Provider architecture
+
+`LLMProvider` is a port (`generate`, `structured_generate(prompt, schema)`,
+`model_name`, `health_check`) — the application/workflow layer never imports an
+SDK. Adapters: **`DeterministicLLMProvider`** (offline default; reproducible,
+rule-based structured output so the pipeline runs with no keys), and
+**`OpenAIProvider`** / **`AnthropicProvider`** (lazy SDK imports; only required
+when selected). Selection is config-driven (`LLM_PROVIDER`, default
+`deterministic`) via a cached factory — the same pattern as the embedding
+provider.
+
+### 16.3 Workflow architecture
+
+`WorkflowEngine.extract_memories(ExtractionRequest) -> ExtractionResult` is the
+port. The six steps live once in `extraction_steps.py` (provider-driven) and are
+shared by two engines so they never diverge:
+
+- **`SequentialExtractionEngine`** — runs the steps in order; **no LangGraph
+  dependency**; the offline/dev/test default (`WORKFLOW_ENGINE=sequential`).
+- **`LangGraphExtractionEngine`** — wires the same steps as nodes of a LangGraph
+  `StateGraph` (`langgraph` imported lazily); production
+  (`WORKFLOW_ENGINE=langgraph`).
+
+`ExtractionResult.workflow_version` (`extraction-v1`) tags every run so future
+workflow generations can be traced and compared; it is also written into each
+created memory's metadata.
+
+### 16.4 Ingestion architecture
+
+`POST /api/v1/ingest {user_id, text}` returns **202 Accepted** `{job_id,
+status:"queued"}` immediately and submits a `WorkflowJob` to an
+`InProcessWorkflowJobProcessor` (async, drained on shutdown — identical to the
+embedding/graph processors). The processor runs `IngestMemoryUseCase`: it calls
+the workflow, then creates each `ExtractedMemory` via **`CreateMemoryUseCase`**
+(a fresh Unit of Work per memory), mapping `importance`/`confidence` onto the
+memory's `MemoryScore` through the (newly extended, backward-compatible)
+`CreateMemoryRequest`. **LangGraph never writes to repositories, the database,
+embeddings, or Neo4j** — it only returns DTOs; all persistence and side effects
+go through the existing write path and event pipeline.
+
+### 16.5 Tests
+
+Unit (deterministic provider, sequential workflow, job processor) + integration
+(ingest use case end-to-end through the event pipeline → embeddings + graph;
+`/ingest` API contract). A LangGraph engine suite `importorskip`s `langgraph`
+(skips offline, like the live-Neo4j suite) and asserts the graph engine produces
+the same memories as the sequential engine. All offline — no API keys, no network.

@@ -1,6 +1,6 @@
 # MemoryArena — Architecture
 
-**Status:** Stage 0 (Foundation) · **Audience:** Engineers, architects, reviewers
+**Status:** Stages 0–9 complete (Knowledge Graph) · **Audience:** Engineers, architects, reviewers
 **Scope:** This document defines the architecture, the reasoning behind every structural decision, and the rules that keep the system maintainable as it grows toward millions of users. It describes *intent*; Stage 0 contains no business logic.
 
 ---
@@ -1179,4 +1179,138 @@ It reports `original_tokens`, `compressed_tokens`, `ratio`, and
 - **Context builder** (SQLite + real retrieval) — package within budget, small-budget enforcement, conflicts reported, duplicate consolidation.
 - **API** — build/debug envelopes, full debug provenance, empty-query and invalid-budget 422.
 
-*Stage 9 would introduce the LangGraph extraction/consolidation workflows and Neo4j graph traversal — and, only if explicitly scoped, RAG response generation on top of this context package.*
+*Stage 9 (below) adds the **knowledge graph** — graph memory, relationship
+derivation, traversal, and graph-aware retrieval. The **LangGraph**
+extraction/consolidation workflows are a separate, later effort (Stage 10), not
+part of Stage 9.*
+
+---
+
+## 15. Stage 9 — Knowledge Graph Layer
+
+Stage 9 adds **graph memory**: each memory becomes a node, edges are derived
+between related memories, and hybrid retrieval can be **expanded** along those
+edges. It is **graph only** — **no LangGraph, no LLM calls, no agent workflows.**
+Relationship derivation is lexical (shared significant entities), not learned.
+
+### 15.1 Files
+
+```
+backend/app/
+├── application/
+│   ├── dto/graph_dto.py                          # GraphNode/Edge/Path, ExpandedMemory, GraphAwareResult
+│   ├── interfaces/
+│   │   ├── graph_repository.py                   # GraphRepository port (nodes/edges/traversal)
+│   │   └── graph_job_processor.py                # GraphJobProcessor port + GraphSyncJob (background sync)
+│   └── services/graph/
+│       ├── config.py                             # GraphConfig (derivation, sync bound, expansion allowlist)
+│       ├── mapping.py                            # memory_to_node + lexical entity extraction
+│       ├── relationship_service.py               # derive RELATED_TO/SUPPORTS/USED_IN edges
+│       ├── sync_service.py                       # upsert node + re-derive edges (bounded); job API
+│       ├── event_handler.py                      # memory events -> graph-sync jobs
+│       ├── traversal_service.py                  # neighbors / subgraph / paths / expand
+│       └── graph_aware_retrieval.py              # hybrid -> graph expansion (filtered, provenance-tagged)
+├── infrastructure/graph/
+│   ├── neo4j.py                                  # Neo4jManager (+ public `database`)
+│   ├── neo4j_graph_repository.py                 # Cypher-backed GraphRepository
+│   ├── in_memory_graph_repository.py             # offline/dev default (adjacency)
+│   ├── in_process_processor.py                   # InProcessGraphJobProcessor (async, drainable)
+│   └── factory.py                                # backend selection (GRAPH_BACKEND)
+├── schemas/graph.py                              # pydantic wire schemas
+└── api/v1/routes/graph.py                         # /graph/search|traverse|memory/{id}|debug
+
+backend/tests/
+├── unit/        test_in_memory_graph_repository · test_graph_relationship_service · test_graph_traversal_service
+└── integration/ test_graph_sync · test_graph_events · test_graph_aware_retrieval · test_graph_api · test_neo4j_graph_repository
+```
+
+### 15.2 Node & edge model
+
+A memory maps to **one** `GraphNode` (`node_id = str(memory.id)`), whose
+`node_type` is derived from `MemoryType` and whose `properties` carry
+`content`, `memory_type`, `status`, `user_id`, `score`, `is_promoted` — enough
+for graph-aware retrieval to build results **without extra DB calls**. Edges
+(`GraphEdge`) are typed (`GraphEdgeType`), directed, and weighted (shared/union
+entity ratio). Edge type is chosen by configurable type-pair rules
+(GOAL/PROJECT→`SUPPORTS`, SKILL/PROJECT→`USED_IN`, …), defaulting to
+`RELATED_TO`.
+
+### 15.3 Sync flow (event-driven, off the request path)
+
+```
+   Memory mutated → use case commits → MemoryCreated/Updated/Deleted dispatched
+        │
+        ▼
+   GraphEventHandler ── submits ──▶ GraphJobProcessor (async, in-process; drainable)
+        │                                   │  SYNC | REMOVE
+        ▼                                   ▼
+   GraphSyncService.process ──▶ sync_memory / remove_memory
+        sync: upsert node → DELETE existing incident edges → derive vs. bounded
+              candidate set → create fresh edges
+```
+
+Three properties make this scale- and correctness-safe:
+
+1. **Off the request path.** Like the Stage 6 embedding pipeline, sync runs on a
+   background `GraphJobProcessor` (the `GraphSyncJob` is submitted, not awaited
+   inline), drained on shutdown. Swapping in Celery/RQ/Kafka is a composition-root
+   change behind the same port.
+2. **Bounded derivation (no O(N²)).** Edges are derived against the most recent
+   `GraphConfig.max_sync_candidates` (default 50) of the user's memories
+   (via `list_by_user`), so a single write is O(K), not O(N) in corpus size.
+3. **Re-derivation removes stale edges.** On every sync the node's existing edges
+   are deleted before fresh ones are written, so an edited memory never leaves a
+   stale relationship behind. (`GraphSyncService` is the only edge writer.)
+
+### 15.4 Graph-aware retrieval
+
+```
+   Query → Hybrid Retrieval (Stage 7) → Graph Expansion → ranked ExpandedMemory[]
+```
+
+Direct hits keep provenance `hybrid` and their retrieval score. Each hit's
+neighbors are pulled in and tagged provenance `graph`, scored at a decayed
+fraction (`graph_score_decay`, default 0.5) of the seed's score so expansion
+adds context without outranking direct matches. Expansion is **filtered**:
+
+- **Edge-type allowlist** (`GraphConfig.expansion_edge_types`) — `CONTRADICTS`
+  is excluded so a contradicting memory is never surfaced as supporting context.
+- **Tenant isolation** — a neighbor whose `user_id` ≠ the query's is dropped.
+- **Status filter** — only `ACTIVE` neighbors expand (or the query's explicit
+  `statuses`).
+
+### 15.5 Backends
+
+`GraphRepository` has two adapters, selected by `GRAPH_BACKEND`:
+
+- **`InMemoryGraphRepository`** (`memory`, default) — adjacency maps; offline,
+  dependency-free; the test/dev default and the basis of the in-memory suite.
+- **`Neo4jGraphRepository`** (`neo4j`) — Cypher over the async driver owned by
+  `Neo4jManager`. Nodes share a `:MemoryNode` label keyed by `id`; edge types
+  come from the validated `GraphEdgeType` enum. `get_edges` reports the **true**
+  stored direction (`startNode`/`endNode`) so a directional `delete_edge` always
+  matches — the seam that makes §15.3's re-derivation correct on Neo4j too.
+
+The backends mirror each other's semantics, so services behave identically
+regardless of which is wired in.
+
+### 15.6 API
+
+| Method | Path | Returns |
+| --- | --- | --- |
+| POST | `/api/v1/graph/search` | graph-aware results (hybrid + expansion) |
+| POST | `/api/v1/graph/debug` | same, with `hybrid_count` / `graph_count` |
+| POST | `/api/v1/graph/traverse` | depth-limited subgraph from a node |
+| GET | `/api/v1/graph/memory/{id}` | a memory's node + immediate neighbors/edges |
+
+### 15.7 Tests
+
+Unit: in-memory repository, relationship derivation, traversal. Integration:
+`GraphSyncService` (node/edge derivation, stale-edge removal, bounded scan,
+delete), event→job wiring, graph-aware expansion + filtering, the `/graph/*`
+API, and a **live Neo4j** suite that **skips when no server is reachable** (so
+offline CI stays green). The Neo4j path is verified against a real server via
+`docker compose up neo4j`.
+
+*Stage 10 introduces the LangGraph agent runtime (extraction/consolidation
+workflows) on top of this graph and the Stage 8 context package.*

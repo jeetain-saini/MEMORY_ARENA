@@ -71,6 +71,10 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_dimensions: int = 1536
 
+    # --- Knowledge graph --------------------------------------------------
+    # Backend: "memory" (offline default) or "neo4j".
+    graph_backend: str = "memory"
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

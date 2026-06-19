@@ -22,6 +22,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.application.services.embedding_event_handler import EmbeddingEventHandler
 from app.application.services.embedding_service import EmbeddingService
+from app.application.services.graph.config import GraphConfig
+from app.application.services.graph.event_handler import GraphEventHandler
+from app.application.services.graph.relationship_service import GraphRelationshipService
+from app.application.services.graph.sync_service import GraphSyncService
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
@@ -31,6 +35,8 @@ from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.infrastructure.embeddings.factory import build_embedding_provider
 from app.infrastructure.embeddings.in_process_processor import InProcessEmbeddingJobProcessor
 from app.infrastructure.events.in_process_dispatcher import in_process_dispatcher
+from app.infrastructure.graph.factory import build_graph_repository
+from app.infrastructure.graph.in_process_processor import InProcessGraphJobProcessor
 from app.infrastructure.graph.neo4j import neo4j_manager
 
 _logger = logging.getLogger("memoryarena.lifecycle")
@@ -55,6 +61,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_processor = InProcessEmbeddingJobProcessor(embedding_service.process)
     EmbeddingEventHandler(embedding_processor).register(in_process_dispatcher)
     app.state.embedding_processor = embedding_processor
+
+    # --- Wire the event-driven knowledge-graph sync ----------------------
+    # Sync runs off the request path via a background job processor (mirrors
+    # the embedding pipeline), drained on shutdown for graceful completion.
+    graph_config = GraphConfig()
+    graph_sync = GraphSyncService(
+        uow_factory=lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+        repository=build_graph_repository(),
+        relationship_service=GraphRelationshipService(graph_config),
+        config=graph_config,
+    )
+    graph_processor = InProcessGraphJobProcessor(graph_sync.process)
+    GraphEventHandler(graph_processor).register(in_process_dispatcher)
+    app.state.graph_processor = graph_processor
     _logger.info("startup.complete")
 
     try:
@@ -63,6 +83,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         # --- Shutdown: drain background work, then release resources ------
         _logger.info("shutdown.begin")
         await embedding_processor.drain()
+        await graph_processor.drain()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()
         await postgres_manager.disconnect()

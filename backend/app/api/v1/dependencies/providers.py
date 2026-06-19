@@ -17,8 +17,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
+from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.graph.config import GraphConfig
+from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
+from app.application.services.graph.traversal_service import GraphTraversalService
 from app.application.services.context.compressor import HeuristicContextCompressor
 from app.application.services.context.config import ContextConfig
 from app.application.services.context.conflict_detector import ConflictDetector
@@ -43,6 +47,7 @@ from app.infrastructure.database.postgres import postgres_manager
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.infrastructure.embeddings.factory import build_embedding_provider
 from app.infrastructure.events.in_process_dispatcher import in_process_dispatcher
+from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.neo4j import neo4j_manager
 
 
@@ -152,6 +157,31 @@ def get_memory_retrieval_service(
     return MemoryRetrievalService(hybrid, reranker)
 
 
+def get_graph_config() -> GraphConfig:
+    """Provide the (tunable) knowledge-graph configuration."""
+    return GraphConfig()
+
+
+def get_graph_repository() -> GraphRepository:
+    """Provide the configured graph repository (process-wide singleton)."""
+    return build_graph_repository()
+
+
+def get_graph_traversal_service(
+    repository: GraphRepository = Depends(get_graph_repository),
+    config: GraphConfig = Depends(get_graph_config),
+) -> GraphTraversalService:
+    return GraphTraversalService(repository, config)
+
+
+def get_graph_aware_retrieval_service(
+    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
+    repository: GraphRepository = Depends(get_graph_repository),
+    config: GraphConfig = Depends(get_graph_config),
+) -> GraphAwareRetrievalService:
+    return GraphAwareRetrievalService(retrieval_service, repository, config)
+
+
 def get_context_config() -> ContextConfig:
     """Provide the (tunable) context-assembly configuration."""
     return ContextConfig()
@@ -185,3 +215,6 @@ MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
 EmbeddingProviderDep = Depends(get_embedding_provider)
 MemoryRetrievalServiceDep = Depends(get_memory_retrieval_service)
 ContextBuilderServiceDep = Depends(get_context_builder_service)
+GraphRepositoryDep = Depends(get_graph_repository)
+GraphTraversalServiceDep = Depends(get_graph_traversal_service)
+GraphAwareRetrievalServiceDep = Depends(get_graph_aware_retrieval_service)

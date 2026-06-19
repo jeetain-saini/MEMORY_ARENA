@@ -49,6 +49,11 @@ class Neo4jManager:
             raise RuntimeError("Neo4jManager is not connected; call connect() first.")
         return self._driver
 
+    @property
+    def database(self) -> str:
+        """The configured Neo4j database name (defaults to ``neo4j``)."""
+        return self._database
+
     async def health_check(self) -> bool:
         if self._driver is None:
             return False

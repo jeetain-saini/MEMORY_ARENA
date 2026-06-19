@@ -15,6 +15,7 @@ from abc import ABC, abstractmethod
 from types import TracebackType
 
 from app.application.interfaces.repositories import (
+    MemoryEmbeddingRepository,
     MemoryRelationRepository,
     MemoryRepository,
     MemoryVersionRepository,
@@ -27,6 +28,7 @@ class UnitOfWork(ABC):
     memories: MemoryRepository
     relations: MemoryRelationRepository
     versions: MemoryVersionRepository
+    embeddings: MemoryEmbeddingRepository
 
     @abstractmethod
     async def __aenter__(self) -> "UnitOfWork": ...

@@ -14,6 +14,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from uuid import UUID
 
+from app.application.dto.embedding_dto import EmbeddingRecord
 from app.application.dto.memory_dto import MemorySearchRequest
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_relation import MemoryRelation
@@ -75,3 +76,25 @@ class MemoryVersionRepository(ABC):
 
     @abstractmethod
     async def get_version(self, memory_id: UUID, version_number: int) -> MemoryVersion | None: ...
+
+
+class MemoryEmbeddingRepository(ABC):
+    """Persistence port for memory embeddings (pgvector-backed)."""
+
+    @abstractmethod
+    async def save_embedding(self, embedding: EmbeddingRecord) -> EmbeddingRecord:
+        """Insert or replace the embedding for (memory_id, model_name)."""
+
+    @abstractmethod
+    async def get_embedding(
+        self, memory_id: UUID, model_name: str | None = None
+    ) -> EmbeddingRecord | None:
+        """Return the embedding for a memory (newest if model_name omitted)."""
+
+    @abstractmethod
+    async def update_embedding(self, embedding: EmbeddingRecord) -> EmbeddingRecord:
+        """Update (or insert) the embedding for (memory_id, model_name)."""
+
+    @abstractmethod
+    async def delete_embedding(self, memory_id: UUID) -> None:
+        """Delete all embeddings for a memory."""

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, Uuid
+from sqlalchemy import ForeignKey, Index, Integer, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.infrastructure.database.base import Base, TimestampMixin, Vector
@@ -34,3 +34,5 @@ class MemoryEmbeddingModel(TimestampMixin, Base):
     )
     vector: Mapped[list[float]] = mapped_column(Vector(EMBEDDING_DIM), nullable=False)
     model_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # Explicit dimensionality aids model-migration queries (find rows to re-embed).
+    dimensions: Mapped[int] = mapped_column(Integer, nullable=False, default=EMBEDDING_DIM)

@@ -60,9 +60,16 @@ class Settings(BaseSettings):
     neo4j_database: str = "neo4j"
     neo4j_max_connection_pool_size: int = 50
 
-    # --- LLM providers (optional in Stage 1; no LLM calls yet) ------------
+    # --- LLM providers (optional; no LLM chat calls) ----------------------
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
+
+    # --- Embeddings -------------------------------------------------------
+    # Provider selection: "hash" (deterministic, dependency-free dev default),
+    # "openai", or "bge" (local sentence-transformers).
+    embedding_provider: str = "hash"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_dimensions: int = 1536
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")

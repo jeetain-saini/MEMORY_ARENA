@@ -8,6 +8,7 @@ without a database.
 
 from __future__ import annotations
 
+from app.application.dto.embedding_dto import EmbeddingRecord
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_relation import MemoryRelation
 from app.domain.entities.memory_score import MemoryScore
@@ -16,6 +17,7 @@ from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 from app.domain.value_objects.relation_type import RelationType
 from app.infrastructure.database.models.memory import MemoryModel
+from app.infrastructure.database.models.memory_embedding import MemoryEmbeddingModel
 from app.infrastructure.database.models.memory_relation import MemoryRelationModel
 from app.infrastructure.database.models.memory_score import MemoryScoreModel
 from app.infrastructure.database.models.memory_version import MemoryVersionModel
@@ -151,5 +153,28 @@ def model_to_version(model: MemoryVersionModel) -> MemoryVersion:
         status=MemoryStatus(model.status),
         metadata=dict(model.meta or {}),
         reason=model.reason,
+        created_at=model.created_at,
+    )
+
+
+# --- EmbeddingRecord <-> MemoryEmbeddingModel ------------------------------
+def embedding_to_model(record: EmbeddingRecord) -> MemoryEmbeddingModel:
+    return MemoryEmbeddingModel(
+        embedding_id=record.embedding_id,
+        memory_id=record.memory_id,
+        vector=list(record.vector),
+        model_name=record.model_name,
+        dimensions=record.dimensions,
+        created_at=record.created_at,
+    )
+
+
+def model_to_embedding(model: MemoryEmbeddingModel) -> EmbeddingRecord:
+    return EmbeddingRecord(
+        embedding_id=model.embedding_id,
+        memory_id=model.memory_id,
+        vector=list(model.vector),
+        model_name=model.model_name,
+        dimensions=model.dimensions,
         created_at=model.created_at,
     )

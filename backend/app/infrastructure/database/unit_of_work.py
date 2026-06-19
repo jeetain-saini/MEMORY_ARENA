@@ -13,6 +13,7 @@ from types import TracebackType
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.repositories.memory_embedding_repository import MemoryEmbeddingRepositoryImpl
 from app.repositories.memory_relation_repository import MemoryRelationRepositoryImpl
 from app.repositories.memory_repository import MemoryRepositoryImpl
 from app.repositories.memory_version_repository import MemoryVersionRepositoryImpl
@@ -28,6 +29,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
         self.memories = MemoryRepositoryImpl(self._session)
         self.relations = MemoryRelationRepositoryImpl(self._session)
         self.versions = MemoryVersionRepositoryImpl(self._session)
+        self.embeddings = MemoryEmbeddingRepositoryImpl(self._session)
         return self
 
     async def __aexit__(

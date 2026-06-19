@@ -814,4 +814,122 @@ and run on separate workers as volume grows.
 - **Intelligence API** — reinforce/promote/archive/analytics happy paths + 404/409/422 mappings.
 - **Scheduler** — abstractions are abstract; future jobs declared with names.
 
-*Stage 6 would introduce embeddings, vector/graph retrieval, and LangGraph extraction/consolidation workflows.*
+*Stage 6 builds the embedding pipeline.*
+
+---
+
+## 12. Stage 6 — Embedding Pipeline
+
+Stage 6 generates and stores embeddings for memories, driven by domain events.
+It is **generation + storage + lifecycle only** — **no retrieval, hybrid/vector
+search, Neo4j, RAG, or LLM chat.** The `memory_embeddings` table (reserved in
+Stage 3) is now populated.
+
+### 12.1 New files
+
+```
+backend/app/
+├── application/
+│   ├── dto/embedding_dto.py                        # EmbeddingRecord
+│   ├── interfaces/
+│   │   ├── embedding_provider.py                   # EmbeddingProvider port
+│   │   └── embedding_job_processor.py              # EmbeddingJob + processor port
+│   └── services/
+│       ├── embedding_service.py                    # generate/store/update/delete + job processing
+│       └── embedding_event_handler.py              # memory events -> embedding jobs
+├── infrastructure/embeddings/
+│   ├── deterministic_provider.py                   # offline dev/test provider
+│   ├── openai_provider.py                          # OpenAIEmbeddingProvider
+│   ├── bge_provider.py                             # LocalBGEEmbeddingProvider
+│   ├── factory.py                                  # provider selection from config
+│   └── in_process_processor.py                     # async in-process worker
+├── repositories/memory_embedding_repository.py     # MemoryEmbeddingRepositoryImpl
+└── alembic/versions/0003_add_embedding_dimensions.py
+
+Updated: config (embedding settings), MemoryEmbeddingModel (+dimensions), mappers,
+UnitOfWork (+embeddings repo), providers/health (+embedding provider), main lifespan
+(wires the event-driven pipeline + drains on shutdown).
+```
+
+### 12.2 Embedding flow (event-driven)
+
+```
+   Memory                      use case mutates the aggregate, commits,
+     │                         then dispatches the recorded domain event
+     ▼
+   Event        MemoryCreated / MemoryUpdated  ── or ──  MemoryDeleted
+     │                         │                              │
+     ▼                         ▼                              ▼
+   EmbeddingEventHandler   submit UPSERT job             submit DELETE job
+     │                          (EmbeddingJobProcessor — async, in-process now)
+     ▼
+   EmbeddingService        load memory → provider.embed_text(content) → EmbeddingRecord
+     │
+     ▼
+   EmbeddingRepository     save_embedding (upsert by memory_id + model_name)
+     │
+     ▼
+   pgvector  (memory_embeddings: vector, model_name, dimensions, created_at)
+```
+
+Producers never call the embedding pipeline directly — they only record domain
+events, so the coupling is one-way and the whole pipeline is swappable. Work runs
+off the request path on the job processor; failures are isolated and logged.
+
+### 12.3 Provider comparison
+
+| Provider | Use | Dimensions | Cost / Deps | Notes |
+| --- | --- | --- | --- | --- |
+| **DeterministicEmbeddingProvider** (`hash`) | dev / tests | configurable (1536) | none, offline | reproducible, **not** semantic |
+| **OpenAIEmbeddingProvider** (`openai`) | production | 1536 (text-embedding-3-small) | API key, per-call cost | client lazily imported/injected |
+| **LocalBGEEmbeddingProvider** (`bge`) | self-hosted | 384–1024 (model-dependent) | GPU/CPU + `sentence-transformers` | no per-call cost; different dims ⇒ migration |
+
+Selection is config-driven (`EMBEDDING_PROVIDER`); the factory returns a
+process-wide singleton. All implement one `EmbeddingProvider` port
+(`embed_text`, `embed_batch`, `model_name`, `dimensions`, `health_check`).
+
+### 12.4 Embedding versioning & model-migration strategy
+
+Each row records **`model_name`**, **`dimensions`**, and **`created_at`** — so
+every vector is attributable to the exact model that produced it. Storage is keyed
+on `(memory_id, model_name)`, which means multiple model generations can coexist
+during a migration.
+
+Migrating to a new embedding model is therefore additive and safe:
+
+1. **Add a column / index** for the new dimensionality if it differs (pgvector
+   columns are fixed-width; e.g. OpenAI 1536 → BGE 1024 needs a matching column).
+2. **Dual-write**: point the provider at the new model; new/updated memories embed
+   under the new `model_name` while old rows remain valid.
+3. **Backfill**: a `DecaySweep`-style background job (Stage 5 scheduler ports)
+   re-embeds existing memories into the new model via the same `UPSERT` path.
+4. **Cut over** reads to the new `model_name`, then drop the old rows/column.
+
+No memory data is lost and no downtime is required, because the embedding is
+derived data the pipeline can always regenerate from `Memory.content`.
+
+### 12.5 Background processing
+
+`EmbeddingJobProcessor` is a port; Stage 6 ships `InProcessEmbeddingJobProcessor`
+(asyncio tasks in the app's loop, with `drain()` for graceful shutdown/tests).
+Because producers depend only on the port, swapping to **Celery**, **RQ**, or a
+**Kafka consumer** at scale requires no change to the event handler or use cases —
+only a different processor wired at the composition root.
+
+### 12.6 Health
+
+`GET /api/v1/health` now also reports `embedding_provider` (`up`/`down`). It is
+informational — a degraded embedding provider does not flip the overall liveness
+to 503, since embedding is asynchronous and non-blocking for core reads/writes.
+
+### 12.7 Test results
+
+`119 passed` (target 110+). New in Stage 6:
+
+- **Providers** — deterministic (reproducible, dims, range, batch, validation), OpenAI (injected fake client, health from config, missing-key error), BGE (injected fake model), and config-driven factory selection.
+- **Job processor** — submit runs the job, `drain` awaits many, failures isolated.
+- **Repository** — save/get, upsert-on-save, update, delete, missing→None.
+- **Service** — generate, store, update (vector changes with content), delete, job UPSERT/DELETE, missing-memory no-op.
+- **Event integration** — `MemoryCreated`/`MemoryUpdated` → embedding stored; `MemoryDeleted` → embedding removed.
+
+*Stage 7 would introduce retrieval: vector similarity search over these embeddings, graph traversal, and the LangGraph extraction/consolidation workflows.*

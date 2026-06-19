@@ -20,11 +20,17 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.application.services.embedding_event_handler import EmbeddingEventHandler
+from app.application.services.embedding_service import EmbeddingService
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
+from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
+from app.infrastructure.embeddings.factory import build_embedding_provider
+from app.infrastructure.embeddings.in_process_processor import InProcessEmbeddingJobProcessor
+from app.infrastructure.events.in_process_dispatcher import in_process_dispatcher
 from app.infrastructure.graph.neo4j import neo4j_manager
 
 _logger = logging.getLogger("memoryarena.lifecycle")
@@ -40,13 +46,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await postgres_manager.connect(settings)
     await redis_manager.connect(settings)
     await neo4j_manager.connect(settings)
+
+    # --- Wire the event-driven embedding pipeline ------------------------
+    embedding_service = EmbeddingService(
+        uow_factory=lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+        provider=build_embedding_provider(),
+    )
+    embedding_processor = InProcessEmbeddingJobProcessor(embedding_service.process)
+    EmbeddingEventHandler(embedding_processor).register(in_process_dispatcher)
+    app.state.embedding_processor = embedding_processor
     _logger.info("startup.complete")
 
     try:
         yield
     finally:
-        # --- Shutdown: release resources in reverse dependency order ------
+        # --- Shutdown: drain background work, then release resources ------
         _logger.info("shutdown.begin")
+        await embedding_processor.drain()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()
         await postgres_manager.disconnect()

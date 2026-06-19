@@ -15,6 +15,7 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
@@ -26,6 +27,7 @@ from app.core.config import Settings, get_settings
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
+from app.infrastructure.embeddings.factory import build_embedding_provider
 from app.infrastructure.events.in_process_dispatcher import in_process_dispatcher
 from app.infrastructure.graph.neo4j import neo4j_manager
 
@@ -63,6 +65,11 @@ def get_unit_of_work() -> UnitOfWork:
 def get_event_dispatcher() -> EventDispatcher:
     """Provide the process-wide in-process event dispatcher (singleton)."""
     return in_process_dispatcher
+
+
+def get_embedding_provider() -> EmbeddingProvider:
+    """Provide the configured embedding provider (process-wide singleton)."""
+    return build_embedding_provider()
 
 
 def get_memory_service(
@@ -110,3 +117,4 @@ EventDispatcherDep = Depends(get_event_dispatcher)
 MemoryServiceDep = Depends(get_memory_service)
 MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
 MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
+EmbeddingProviderDep = Depends(get_embedding_provider)

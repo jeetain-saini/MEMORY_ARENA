@@ -645,7 +645,7 @@ regress the count.
 - **Vector search is brute-force** in the repository (exact cosine over candidates) — correct but not ANN-scaled; the `list_candidates` port is the seam for a pgvector ANN index.
 - **No observability stack** — JSON logs + correlation IDs exist; no metrics/tracing/dashboards (LangSmith/OTel) yet.
 - **No authn/authz enforcement** — `user_id` is passed in; JWT settings exist but no auth middleware.
-- **Frontend not built** — Next.js scaffold only.
+- **Frontend dashboard built (Stage 12).** Next.js 15 + React 19 + TanStack Query + shadcn/ui + React Flow; six pages (Dashboard, Memory/Graph Explorer, Context/Agent Playground, Summary Explorer) consuming the existing API. Frontend-only — no backend changes. Summary Explorer degrades gracefully until a `GET /api/v1/summaries/{user_id}` read endpoint is added. No auth: `user_id` is a manual/env-default field persisted in localStorage.
 - **In-memory graph + dispatcher are process-local** — not multi-instance safe until backed by Neo4j / a real broker.
 - **Analytics & BM25 load candidates into memory** — fine at moderate scale; SQL/index pushdown is a future optimization.
 

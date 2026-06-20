@@ -1799,3 +1799,60 @@ threshold, sync-survival, event handler), summary repository + service
 (create/upsert/version/provenance/non-mutation), migration structure, and the
 end-to-end workflow orchestration (event-driven inference + scheduled jobs). All
 offline — SQLite + in-memory graph + deterministic generator; no real services.
+
+---
+
+## 20. Stage 12 — Next.js Dashboard
+
+Stage 12 adds the user-facing dashboard. It is **frontend-only**: it consumes the
+existing API, holds no business logic, makes **no backend changes**, and ships no
+auth/observability/deployment. Lives in `frontend/` (Next.js 15 App Router, React
+19, TypeScript strict, Tailwind + shadcn/ui, TanStack Query, React Flow).
+
+### 20.1 Pages → API
+
+| Route | Feature | Endpoints |
+| --- | --- | --- |
+| `/` | Dashboard home (counts, promoted, distribution, recent) | `GET /memories/analytics`, `GET /memories/user/{id}` |
+| `/memories` | Memory Explorer (search, type/status filters, detail + actions) | `POST /memories/search`, `GET /memories/{id}`, reinforce/promote/archive/delete |
+| `/graph` | Graph Explorer (inferred + CONTRADICTS edges, dependency chains) | `POST /graph/traverse`, `GET /graph/memory/{id}` |
+| `/context` | Context Playground (retrieval, package, compression) | `POST /retrieval/debug`, `POST /context/debug` |
+| `/agent` | Agent Playground (streamed answer, citations, trace) | `POST /query/stream` (SSE), `POST /query` |
+| `/summaries` | Summary Explorer (graceful degradation — no read API yet) | `GET /summaries/{id}` *(not exposed)* |
+
+### 20.2 Data layer
+
+`lib/api-client` wraps `fetch`, unwraps the `{ success, data }` envelope, and
+throws `ApiError` on the error envelope. `services/*` are typed clients (one per
+API group); `hooks/*` are TanStack Query queries/mutations keyed by `user_id`,
+with mutations invalidating memory/analytics caches. All response shapes are
+mirrored as TypeScript interfaces in `types/*`.
+
+### 20.3 User identity (no auth)
+
+`UserContext` resolves the active `user_id` in priority order — localStorage
+override → `NEXT_PUBLIC_DEFAULT_USER_ID` → empty-state prompt — exposed via
+`useCurrentUser()`, editable in the top bar, persisted to localStorage, and
+injected into every request. A clean migration path to real auth later.
+
+### 20.4 Graph visualization
+
+React Flow (`@xyflow/react`) + dagre top-down layout. `GraphNode`s render as a
+custom `MemoryNode` (colored by node type); `GraphEdge`s are styled per
+`edge_type` — `CONTRADICTS` dashed red, `DEPENDS_ON`/`DERIVED_FROM` directed
+arrowheads (dependency chains), each with a legend and per-type counts. Clicking
+a node re-roots the traversal; a depth slider drives `POST /graph/traverse`.
+
+### 20.5 Streaming
+
+`/query/stream` is a POST SSE endpoint, so `EventSource` (GET-only) cannot be
+used. `lib/sse` reads `response.body` with a reader and parses `event:`/`data:`
+frames; `use-agent-stream` accumulates `step`/`answer`/`citations` and finalizes
+on `done` (or surfaces `error`), with `AbortController`-based cancellation. The
+Agent Playground renders a live trace timeline, the streaming answer, and
+validated citations.
+
+### 20.6 Verification
+
+`npm run typecheck` (strict, clean) and `next build` (all routes prerender) pass.
+The backend is unchanged — Python suite remains **434 passed / 7 skipped**.

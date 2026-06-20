@@ -20,12 +20,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
+from app.application.services.consolidation.config import ConsolidationConfig
+from app.application.services.consolidation.consolidation_event_handler import (
+    ConsolidationEventHandler,
+)
+from app.application.services.consolidation.persistent_consolidation_service import (
+    PersistentConsolidationService,
+)
 from app.application.services.embedding_event_handler import EmbeddingEventHandler
 from app.application.services.embedding_service import EmbeddingService
 from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.event_handler import GraphEventHandler
 from app.application.services.graph.relationship_service import GraphRelationshipService
 from app.application.services.graph.sync_service import GraphSyncService
+from app.application.services.intelligence_config import IntelligenceConfig
+from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
@@ -39,7 +48,10 @@ from app.infrastructure.events.in_process_dispatcher import in_process_dispatche
 from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.in_process_processor import InProcessGraphJobProcessor
 from app.infrastructure.graph.neo4j import neo4j_manager
-from app.infrastructure.llm.graphs.factory import build_workflow_engine
+from app.infrastructure.llm.graphs.factory import build_consolidation_engine, build_workflow_engine
+from app.infrastructure.llm.in_process_consolidation_processor import (
+    InProcessConsolidationJobProcessor,
+)
 from app.infrastructure.llm.in_process_workflow_processor import InProcessWorkflowJobProcessor
 
 _logger = logging.getLogger("memoryarena.lifecycle")
@@ -91,6 +103,36 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     )
     workflow_processor = InProcessWorkflowJobProcessor(ingest_use_case.process)
     app.state.workflow_processor = workflow_processor
+
+    # --- Wire the write-time memory consolidation pipeline ---------------
+    # Triggered by MemoryCreated; compares each new memory against the user's
+    # recent corpus.  SUPERSEDES decisions archive the older memory; CONTRADICTS
+    # decisions write a durable CONTRADICTS graph edge.  Offline default engine
+    # is sequential (no LangGraph dependency).
+    consolidation_config = ConsolidationConfig(
+        candidate_pool=settings.consolidation_candidate_pool,
+        contradict_confidence=settings.consolidation_contradict_confidence,
+        supersede_confidence=settings.consolidation_supersede_confidence,
+    )
+
+    def _make_intelligence_service() -> MemoryIntelligenceService:
+        return MemoryIntelligenceService(
+            uow=SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+            dispatcher=in_process_dispatcher,
+            config=IntelligenceConfig(),
+        )
+
+    consolidation_service = PersistentConsolidationService(
+        uow_factory=lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+        engine=build_consolidation_engine(),
+        intelligence_service_factory=_make_intelligence_service,
+        graph_repo=build_graph_repository(),
+        dispatcher=in_process_dispatcher,
+        config=consolidation_config,
+    )
+    consolidation_processor = InProcessConsolidationJobProcessor(consolidation_service.process)
+    ConsolidationEventHandler(consolidation_processor).register(in_process_dispatcher)
+    app.state.consolidation_processor = consolidation_processor
     _logger.info("startup.complete")
 
     try:
@@ -101,6 +143,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await embedding_processor.drain()
         await graph_processor.drain()
         await workflow_processor.drain()
+        await consolidation_processor.drain()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()
         await postgres_manager.disconnect()

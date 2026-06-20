@@ -82,3 +82,18 @@ class MemoryDecayed(DomainEvent):
     user_id: UUID
     recency: float
     total_score: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemorySuperseded(DomainEvent):
+    memory_id: UUID          # the memory that was archived (the old one)
+    superseded_by_id: UUID   # the new memory that replaced it
+    user_id: UUID
+
+
+@dataclass(frozen=True, kw_only=True)
+class MemoryConflictFound(DomainEvent):
+    memory_id_a: UUID        # the new memory
+    memory_id_b: UUID        # the existing contradicting memory
+    user_id: UUID
+    reasoning: str

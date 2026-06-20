@@ -20,6 +20,7 @@ from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.interfaces.consolidation_job_processor import ConsolidationJobProcessor
 from app.application.interfaces.workflow_job_processor import WorkflowJobProcessor
 from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
@@ -191,6 +192,11 @@ def get_workflow_processor(request: Request) -> WorkflowJobProcessor:
     tests via the standard dependency-override mechanism.
     """
     return request.app.state.workflow_processor
+
+
+def get_consolidation_processor(request: Request) -> ConsolidationJobProcessor:
+    """Provide the consolidation job processor wired in the app lifespan."""
+    return request.app.state.consolidation_processor
 
 
 def get_context_config() -> ContextConfig:

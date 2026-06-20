@@ -53,11 +53,16 @@ class InMemoryGraphRepository(GraphRepository):
     ) -> None:
         self._edges.pop((source_id, target_id, edge_type.value), None)
 
-    async def get_edges(self, node_id: str) -> list[GraphEdge]:
+    async def get_edges(
+        self,
+        node_id: str,
+        exclude_types: frozenset[GraphEdgeType] | None = None,
+    ) -> list[GraphEdge]:
         return [
             edge
             for edge in self._edges.values()
-            if edge.source_id == node_id or edge.target_id == node_id
+            if (edge.source_id == node_id or edge.target_id == node_id)
+            and (exclude_types is None or edge.edge_type not in exclude_types)
         ]
 
     # --- traversal --------------------------------------------------------

@@ -39,7 +39,11 @@ class GraphRepository(ABC):
     ) -> None: ...
 
     @abstractmethod
-    async def get_edges(self, node_id: str) -> list[GraphEdge]: ...
+    async def get_edges(
+        self,
+        node_id: str,
+        exclude_types: frozenset[GraphEdgeType] | None = None,
+    ) -> list[GraphEdge]: ...
 
     # --- traversal --------------------------------------------------------
     @abstractmethod

@@ -82,16 +82,31 @@ class Neo4jGraphRepository(GraphRepository):
             target=target_id,
         )
 
-    async def get_edges(self, node_id: str) -> list[GraphEdge]:
+    async def get_edges(
+        self,
+        node_id: str,
+        exclude_types: frozenset[GraphEdgeType] | None = None,
+    ) -> list[GraphEdge]:
         # Return the *true* stored direction (startNode/endNode), so callers can
         # delete an edge by its (source, target, type) key regardless of which
         # endpoint was queried.
-        records = await self._run(
-            "MATCH (a:MemoryNode {id: $id})-[r]-(:MemoryNode) "
-            "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
-            "type(r) AS t, r.weight AS w, properties(r) AS p",
-            id=node_id,
-        )
+        if exclude_types:
+            excluded = [t.value.upper() for t in exclude_types]
+            records = await self._run(
+                "MATCH (a:MemoryNode {id: $id})-[r]-(:MemoryNode) "
+                "WHERE NOT type(r) IN $excluded "
+                "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
+                "type(r) AS t, r.weight AS w, properties(r) AS p",
+                id=node_id,
+                excluded=excluded,
+            )
+        else:
+            records = await self._run(
+                "MATCH (a:MemoryNode {id: $id})-[r]-(:MemoryNode) "
+                "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
+                "type(r) AS t, r.weight AS w, properties(r) AS p",
+                id=node_id,
+            )
         return [self._to_edge(rec) for rec in records]
 
     # --- traversal --------------------------------------------------------

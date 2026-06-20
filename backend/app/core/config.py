@@ -82,6 +82,13 @@ class Settings(BaseSettings):
     # Backend: "memory" (offline default) or "neo4j".
     graph_backend: str = "memory"
 
+    # --- Consolidation ----------------------------------------------------
+    # Engine: "sequential" (offline default, no LangGraph) or "langgraph".
+    consolidation_engine: str = "sequential"
+    consolidation_candidate_pool: int = 50
+    consolidation_contradict_confidence: float = 0.60
+    consolidation_supersede_confidence: float = 0.80
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

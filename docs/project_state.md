@@ -6,16 +6,19 @@
 > behavior, the decisions made and *why*, the known gaps, and the rules a future
 > contributor must follow to **continue** the architecture rather than redesign it.
 >
-> **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phases 1–3
-> complete** — LangGraph Memory Extraction (Phase 1), write-time Consolidation &
-> Conflict Resolution (Phase 2), and LLM Context Compression (Phase 3). Raw text →
-> extraction workflow → `CreateMemoryUseCase` → events → embeddings + graph +
-> consolidation, behind an `LLMProvider` port (deterministic offline default) and
-> `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` ports (sequential
-> & heuristic offline defaults; LangGraph & LLM in production). **Test suite:
-> `329 passing, 6 skipped`** (PyTest; skips are live-Neo4j + the LangGraph-engine
-> suites, which skip when those deps/servers are unavailable). The companion
-> deep-dive lives in [`docs/architecture.md`](architecture.md) (sections §1–§17).
+> **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phases 1–4
+> complete** — LangGraph Memory Extraction (P1), write-time Consolidation &
+> Conflict Resolution (P2), LLM Context Compression (P3), and the Query-Time Agent
+> Runtime (P4). Raw text → extraction → `CreateMemoryUseCase` → events →
+> embeddings + graph + consolidation for writes; and query → agent runtime →
+> retrieval + graph expansion + context assembly + LLM compression → answer for
+> reads — behind an `LLMProvider` port (deterministic offline default) and
+> `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` / `AgentRuntime`
+> ports (sequential & heuristic offline defaults; LangGraph & LLM in production).
+> **Test suite: `379 passing, 7 skipped`** (PyTest; skips are live-Neo4j + the
+> LangGraph suites, which skip when those deps/servers are unavailable). The
+> companion deep-dive lives in [`docs/architecture.md`](architecture.md)
+> (sections §1–§18).
 
 ---
 
@@ -199,6 +202,13 @@ place where abstract ports are bound to concrete adapters via FastAPI `Depends`.
 - **Decisions:** the LLM is never trusted blindly — any validation failure, provider exception, empty/oversized response routes to the heuristic fallback, so context generation can never fail or exceed `max_tokens`; the deterministic provider echoes its prompt → the offline default path always exercises the fallback; provenance (`memory_id`, `memory_type`, conflict/consolidation records) is preserved; existing `ContextPackage` DTOs and `/context/*` API contracts unchanged.
 - **Scope:** compression only — **no** query-time agent, chat, or RAG generation.
 - **Tests:** unit (prompts, each validator, compressor accept/fallback branches, factory selection) + integration (builder pipeline with LLM compressor: valid output, graceful fallback, end-to-end budget, debug stats, provenance). All offline.
+
+### Stage 10 — Query-Time Agent Runtime *(Phase 4 complete)*
+- **Purpose:** Turn a user query into an answer by orchestrating the existing pipeline (retrieval → graph expansion → context assembly → LLM compression → generation). Adds **no new capability**; MemoryArena remains the system, the agent only orchestrates it, and `ContextPackage` is the primary artifact.
+- **Components:** `AgentRuntime` port (`respond` + `stream`) + `AgentTool` ABC; `agent_dto` DTOs; `AgentToolSet` over `MemorySearchTool` / `GraphExpansionTool` / `ContextBuilderTool`; `citation_validation` (dedup, id-validate, cap, provenance); shared `agent_steps` (stages + guardrails + streaming); `SequentialAgentRuntime` (offline default) + `LangGraphAgentRuntime` (lazy `langgraph`) via `build_agent_runtime` (`AGENT_RUNTIME`); `QueryMemoryUseCase`; `POST /query` + `POST /query/stream` (SSE). Extends `GraphAwareRetrievalService` (new `expand`) and `ContextBuilderService.build` (optional `retrieved=`) so **retrieval runs once**.
+- **Decisions:** single linear pass — no loops, no autonomous planning; guardrails `max_iterations` / `max_tool_calls` / token (context budget + answer cap) / `timeout`; tool-failure recovery — retrieval/graph failures degrade gracefully, context-build failure is terminal `error`; SSE always ends with a `done` event (`error` before it on failure/timeout); no LangGraph type leaves infrastructure; no new background processor (query is synchronous).
+- **Scope:** query answering only — **no** dashboard, observability, multi-agent, or autonomous agents.
+- **Tests:** unit (DTOs, tools + tool set, citation validation, sequential runtime incl. every guard + 3 tool-failure paths + ContextPackage-as-primary + single-retrieval, streaming, query use case) + skip-guarded LangGraph parity/guards + integration (`/query` + `/query/stream` SSE). All offline.
 
 ---
 
@@ -619,9 +629,10 @@ regress the count.
   unit + integration tests, and a live-Neo4j suite (skipped when no server) all
   in place. Default backend remains in-memory (offline-first); the Neo4j path is
   exercised by the live suite when a server is available.
-- **LangGraph: extraction + consolidation (Stage 10 Phases 1–2).** The extraction and consolidation workflows exist in `infrastructure/llm/graphs`; any query-time agent/RAG runtime is **not** built (later stage). `infrastructure/llm/chains` is still an empty placeholder.
+- **LangGraph: extraction + consolidation + agent (Stage 10 Phases 1–2, 4).** The extraction, consolidation, and agent workflows exist in `infrastructure/llm/graphs`; the offline defaults are sequential. `infrastructure/llm/chains` is still an empty placeholder.
 - **LLM context compression is available but off by default (Stage 10 Phase 3).** `LLMContextCompressor` implements the `ContextCompressor` port behind `CONTEXT_COMPRESSOR=llm`; the heuristic compressor remains the offline default, and the LLM path always falls back to it on any validation/provider failure.
-- **No agent runtime / chat generation / RAG response** — by design; out of scope so far.
+- **Query-time agent runtime is built (Stage 10 Phase 4) but single-pass.** `POST /query` + `/query/stream` orchestrate the existing pipeline with guardrails; the runtime is linear (no autonomous tool loops yet — the LangGraph runtime is structured to add them). No dashboard, observability, multi-agent, or autonomous-agent behavior (out of scope).
+- **Query-time agent runtime exists (Stage 10 Phase 4); no chat/multi-turn or autonomous tool loops** — single-pass orchestration with guardrails; conversational memory and tool loops are future work.
 - **No background scheduler implementation** — only the `Scheduler` ports; decay/archival/promotion sweeps are manual/API-triggered.
 - **Vector search is brute-force** in the repository (exact cosine over candidates) — correct but not ANN-scaled; the `list_candidates` port is the seam for a pgvector ANN index.
 - **No observability stack** — JSON logs + correlation IDs exist; no metrics/tracing/dashboards (LangSmith/OTel) yet.

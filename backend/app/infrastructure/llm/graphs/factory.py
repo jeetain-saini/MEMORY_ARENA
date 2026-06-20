@@ -15,6 +15,7 @@ Both factories are cached as process-wide singletons; call
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from app.application.interfaces.consolidation_engine import ConsolidationEngine
 from app.application.interfaces.workflow_engine import WorkflowEngine
@@ -24,6 +25,12 @@ from app.infrastructure.llm.graphs.sequential_consolidation_engine import (
 )
 from app.infrastructure.llm.graphs.sequential_engine import SequentialExtractionEngine
 from app.infrastructure.llm.providers.factory import build_llm_provider
+
+if TYPE_CHECKING:
+    from app.application.interfaces.agent_runtime import AgentRuntime
+    from app.application.interfaces.llm_provider import LLMProvider
+    from app.application.interfaces.token_counter import TokenCounter
+    from app.application.services.agent.toolset import AgentToolSet
 
 
 @lru_cache(maxsize=1)
@@ -46,3 +53,24 @@ def build_consolidation_engine() -> ConsolidationEngine:
 
         return LangGraphConsolidationEngine(provider)
     return SequentialConsolidationEngine(provider)
+
+
+def build_agent_runtime(
+    toolset: AgentToolSet,
+    provider: LLMProvider,
+    counter: TokenCounter,
+) -> AgentRuntime:
+    """Select the query-time agent runtime by ``AGENT_RUNTIME``.
+
+    Not cached: the toolset is assembled per request from the (singleton-backed)
+    services. ``sequential`` is the offline default; ``langgraph`` lazily imports
+    the package and is exercised by the skip-guarded agent suite.
+    """
+    settings = get_settings()
+    if settings.agent_runtime.lower() == "langgraph":
+        from app.infrastructure.llm.graphs.agent_graph import LangGraphAgentRuntime
+
+        return LangGraphAgentRuntime(toolset, provider, counter)
+    from app.infrastructure.llm.graphs.sequential_agent_runtime import SequentialAgentRuntime
+
+    return SequentialAgentRuntime(toolset, provider, counter)

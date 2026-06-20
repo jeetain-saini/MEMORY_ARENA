@@ -21,7 +21,7 @@ from app.application.dto.context_dto import (
     ContextRequest,
     DroppedMemory,
 )
-from app.application.dto.retrieval_dto import MemorySearchQuery
+from app.application.dto.retrieval_dto import MemorySearchQuery, RetrievedMemory
 from app.application.interfaces.context_compressor import ContextCompressor
 from app.application.services.context.conflict_detector import ConflictDetector
 from app.application.services.context.consolidation_service import MemoryConsolidationService
@@ -54,11 +54,21 @@ class ContextBuilderService:
         self._conflicts = conflict_detector
         self._compressor = compressor
 
-    async def build(self, request: ContextRequest) -> ContextPackage:
-        return (await self._assemble(request)).package
+    async def build(
+        self,
+        request: ContextRequest,
+        *,
+        retrieved: list[RetrievedMemory] | None = None,
+    ) -> ContextPackage:
+        return (await self._assemble(request, retrieved=retrieved)).package
 
-    async def debug(self, request: ContextRequest) -> ContextDebugPackage:
-        a = await self._assemble(request)
+    async def debug(
+        self,
+        request: ContextRequest,
+        *,
+        retrieved: list[RetrievedMemory] | None = None,
+    ) -> ContextDebugPackage:
+        a = await self._assemble(request, retrieved=retrieved)
         return ContextDebugPackage(
             package=a.package,
             selected=a.selected,
@@ -68,17 +78,29 @@ class ContextBuilderService:
             compression=a.compression,
         )
 
-    async def _assemble(self, request: ContextRequest) -> _Assembly:
-        retrieval = await self._retrieval.search(
-            MemorySearchQuery(
-                query=request.query,
-                user_id=request.user_id,
-                filters=request.filters,
-                top_k=request.top_k,
+    async def _assemble(
+        self,
+        request: ContextRequest,
+        *,
+        retrieved: list[RetrievedMemory] | None = None,
+    ) -> _Assembly:
+        # When a caller supplies pre-retrieved memories (e.g. the agent runtime,
+        # which already ran hybrid retrieval + graph expansion), reuse them
+        # instead of retrieving again. Otherwise retrieve internally as before.
+        if retrieved is None:
+            retrieval = await self._retrieval.search(
+                MemorySearchQuery(
+                    query=request.query,
+                    user_id=request.user_id,
+                    filters=request.filters,
+                    top_k=request.top_k,
+                )
             )
-        )
+            candidates = retrieval.results
+        else:
+            candidates = retrieved
 
-        selection = self._selection.select(retrieval.results, request.max_tokens)
+        selection = self._selection.select(candidates, request.max_tokens)
         consolidation = self._consolidation.consolidate(selection.selected)
         conflicts = self._conflicts.detect(consolidation.consolidated)
         compression = await self._compressor.compress(

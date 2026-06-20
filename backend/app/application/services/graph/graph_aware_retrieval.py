@@ -13,7 +13,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from app.application.dto.graph_dto import ExpandedMemory, GraphAwareResult
-from app.application.dto.retrieval_dto import MemorySearchQuery
+from app.application.dto.retrieval_dto import MemorySearchQuery, RetrievalResult
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.services.graph.config import GraphConfig
 from app.application.services.retrieval.retrieval_service import MemoryRetrievalService
@@ -35,8 +35,23 @@ class GraphAwareRetrievalService:
     async def search(
         self, query: MemorySearchQuery, *, expand_depth: int | None = None
     ) -> GraphAwareResult:
-        depth = expand_depth or self._config.expansion_depth
         base = await self._retrieval.search(query)
+        return await self.expand(base, query, expand_depth=expand_depth)
+
+    async def expand(
+        self,
+        base: RetrievalResult,
+        query: MemorySearchQuery,
+        *,
+        expand_depth: int | None = None,
+    ) -> GraphAwareResult:
+        """Expand an already-retrieved result set along graph edges.
+
+        Separated from ``search`` so a caller (e.g. the agent runtime) that has
+        already run hybrid retrieval can reuse those hits instead of retrieving a
+        second time. ``search`` simply retrieves then delegates here.
+        """
+        depth = expand_depth or self._config.expansion_depth
 
         results: list[ExpandedMemory] = []
         seen: set[UUID] = set()

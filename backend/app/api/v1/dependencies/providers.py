@@ -15,6 +15,7 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.interfaces.agent_runtime import AgentRuntime
 from app.application.interfaces.context_compressor import ContextCompressor
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
@@ -23,6 +24,13 @@ from app.application.interfaces.reranker import Reranker
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.interfaces.consolidation_job_processor import ConsolidationJobProcessor
 from app.application.interfaces.workflow_job_processor import WorkflowJobProcessor
+from app.application.dto.agent_dto import AgentConfig
+from app.application.services.agent.tools import (
+    ContextBuilderTool,
+    GraphExpansionTool,
+    MemorySearchTool,
+)
+from app.application.services.agent.toolset import AgentToolSet
 from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
 from app.application.services.graph.traversal_service import GraphTraversalService
@@ -43,6 +51,8 @@ from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.services.memory_service import MemoryService
+from app.application.use_cases.query_memory_use_cases import QueryMemoryUseCase
+from app.application.use_cases.query_memory_use_cases_impl import QueryMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
@@ -52,6 +62,8 @@ from app.infrastructure.events.in_process_dispatcher import in_process_dispatche
 from app.infrastructure.llm.compressors.factory import build_context_compressor
 from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.neo4j import neo4j_manager
+from app.infrastructure.llm.graphs.factory import build_agent_runtime
+from app.infrastructure.llm.providers.factory import build_llm_provider
 
 
 def get_app_settings() -> Settings:
@@ -230,6 +242,45 @@ def get_context_builder_service(
     )
 
 
+def get_agent_config(settings: Settings = Depends(get_app_settings)) -> AgentConfig:
+    """Build the agent guardrail/budget config from settings."""
+    return AgentConfig(
+        max_tokens=settings.agent_max_tokens,
+        answer_max_tokens=settings.agent_answer_max_tokens,
+        max_iterations=settings.agent_max_iterations,
+        max_tool_calls=settings.agent_max_tool_calls,
+        max_citations=settings.agent_max_citations,
+        timeout_seconds=settings.agent_timeout_seconds,
+        top_k=settings.agent_top_k,
+    )
+
+
+def get_agent_runtime(
+    retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
+    graph_aware: GraphAwareRetrievalService = Depends(get_graph_aware_retrieval_service),
+    context_builder: ContextBuilderService = Depends(get_context_builder_service),
+) -> AgentRuntime:
+    """Assemble the query-time agent runtime for a request.
+
+    The tool set wraps the existing services; the runtime (sequential default or
+    LangGraph) is selected by configuration. Retrieval runs once — the graph tool
+    reuses the base hits via ``expand`` and the builder consumes the combined set.
+    """
+    toolset = AgentToolSet(
+        MemorySearchTool(retrieval_service),
+        GraphExpansionTool(graph_aware),
+        ContextBuilderTool(context_builder),
+    )
+    return build_agent_runtime(toolset, build_llm_provider(), HeuristicTokenCounter())
+
+
+def get_query_use_case(
+    runtime: AgentRuntime = Depends(get_agent_runtime),
+) -> QueryMemoryUseCase:
+    """Assemble the query use case for a request."""
+    return QueryMemoryUseCaseImpl(runtime)
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
@@ -247,3 +298,6 @@ GraphRepositoryDep = Depends(get_graph_repository)
 GraphTraversalServiceDep = Depends(get_graph_traversal_service)
 GraphAwareRetrievalServiceDep = Depends(get_graph_aware_retrieval_service)
 WorkflowProcessorDep = Depends(get_workflow_processor)
+AgentConfigDep = Depends(get_agent_config)
+AgentRuntimeDep = Depends(get_agent_runtime)
+QueryUseCaseDep = Depends(get_query_use_case)

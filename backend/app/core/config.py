@@ -95,6 +95,17 @@ class Settings(BaseSettings):
     # with validation and heuristic fallback).
     context_compressor: str = "heuristic"
 
+    # --- Query-time agent runtime -----------------------------------------
+    # Runtime: "sequential" (offline default, no LangGraph) or "langgraph".
+    agent_runtime: str = "sequential"
+    agent_max_iterations: int = 1
+    agent_max_tool_calls: int = 8
+    agent_max_citations: int = 10
+    agent_timeout_seconds: float = 30.0
+    agent_top_k: int = 10
+    agent_max_tokens: int = 2000
+    agent_answer_max_tokens: int = 512
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

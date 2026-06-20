@@ -34,6 +34,15 @@ class MemorySummaryService:
         self._generator = generator
         self._config = config or MaintenanceConfig()
 
+    # -- reads (thin passthroughs to the repository) -----------------------
+    async def list_for_user(self, user_id: UUID) -> list[MemorySummary]:
+        async with self._uow_factory() as uow:
+            return await uow.summaries.list_for_user(user_id)
+
+    async def get(self, user_id: UUID, scope: MemoryType) -> MemorySummary | None:
+        async with self._uow_factory() as uow:
+            return await uow.summaries.get(user_id, scope)
+
     async def refresh(self, user_id: UUID) -> SummaryRefreshResult:
         async with self._uow_factory() as uow:
             memories = await uow.memories.list_for_analytics(user_id)

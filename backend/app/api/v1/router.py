@@ -9,7 +9,16 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1.routes import context, graph, health, ingest, memories, query, retrieval
+from app.api.v1.routes import (
+    context,
+    graph,
+    health,
+    ingest,
+    memories,
+    query,
+    retrieval,
+    summaries,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.router)
@@ -19,3 +28,4 @@ api_router.include_router(context.router)
 api_router.include_router(graph.router)
 api_router.include_router(ingest.router)
 api_router.include_router(query.router)
+api_router.include_router(summaries.router)

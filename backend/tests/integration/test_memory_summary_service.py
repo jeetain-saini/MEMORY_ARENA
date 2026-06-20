@@ -139,3 +139,43 @@ def test_refresh_provenance_tracks_source_ids() -> None:
         await engine.dispose()
 
     _run(scenario)
+
+
+# --- read passthroughs (Stage 12.5) ---------------------------------------
+
+def test_list_for_user_returns_stored_summaries() -> None:
+    async def scenario() -> None:
+        engine, uow_factory, user, service = await _ctx()
+        await _save(uow_factory, user, "ship the analytics platform", MemoryType.PROJECT)
+        await _save(uow_factory, user, "learn rust this quarter", MemoryType.GOAL)
+        await service.refresh(user)
+
+        summaries = await service.list_for_user(user)
+        assert {s.scope for s in summaries} == {MemoryType.PROJECT, MemoryType.GOAL}
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_get_returns_scope_summary_or_none() -> None:
+    async def scenario() -> None:
+        engine, uow_factory, user, service = await _ctx()
+        await _save(uow_factory, user, "ship the dashboard", MemoryType.PROJECT)
+        await service.refresh(user)
+
+        project = await service.get(user, MemoryType.PROJECT)
+        missing = await service.get(user, MemoryType.EXPERIENCE)
+        assert project is not None and "dashboard" in project.summary_text
+        assert missing is None
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_list_for_user_empty_when_no_summaries() -> None:
+    async def scenario() -> None:
+        engine, uow_factory, user, service = await _ctx()
+        assert await service.list_for_user(user) == []
+        await engine.dispose()
+
+    _run(scenario)

@@ -32,6 +32,8 @@ from app.application.services.agent.tools import (
 )
 from app.application.services.agent.toolset import AgentToolSet
 from app.application.services.graph.config import GraphConfig
+from app.application.services.maintenance.config import MaintenanceConfig
+from app.application.services.maintenance.memory_summary_service import MemorySummaryService
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
 from app.application.services.graph.traversal_service import GraphTraversalService
 from app.application.services.context.config import ContextConfig
@@ -64,6 +66,9 @@ from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.neo4j import neo4j_manager
 from app.infrastructure.llm.graphs.factory import build_agent_runtime
 from app.infrastructure.llm.providers.factory import build_llm_provider
+from app.infrastructure.summaries.deterministic_summary_generator import (
+    DeterministicSummaryGenerator,
+)
 
 
 def get_app_settings() -> Settings:
@@ -281,6 +286,19 @@ def get_query_use_case(
     return QueryMemoryUseCaseImpl(runtime)
 
 
+def get_summary_service() -> MemorySummaryService:
+    """Assemble the summary service for a request (read endpoints).
+
+    Mirrors ``get_memory_service``: reads go through the service, which delegates
+    to ``MemorySummaryRepository`` within a fresh Unit of Work. The deterministic
+    generator is supplied to satisfy the constructor; the read paths do not use it.
+    """
+    def uow_factory() -> UnitOfWork:
+        return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+    return MemorySummaryService(uow_factory, DeterministicSummaryGenerator(), MaintenanceConfig())
+
+
 # Convenience aliases for annotated dependencies.
 SettingsDep = Depends(get_app_settings)
 DBSessionDep = Depends(get_db_session)
@@ -301,3 +319,4 @@ WorkflowProcessorDep = Depends(get_workflow_processor)
 AgentConfigDep = Depends(get_agent_config)
 AgentRuntimeDep = Depends(get_agent_runtime)
 QueryUseCaseDep = Depends(get_query_use_case)
+SummaryServiceDep = Depends(get_summary_service)

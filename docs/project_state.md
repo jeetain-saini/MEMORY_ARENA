@@ -7,18 +7,19 @@
 > contributor must follow to **continue** the architecture rather than redesign it.
 >
 > **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phases 1–4
-> complete** — LangGraph Memory Extraction (P1), write-time Consolidation &
-> Conflict Resolution (P2), LLM Context Compression (P3), and the Query-Time Agent
-> Runtime (P4). Raw text → extraction → `CreateMemoryUseCase` → events →
-> embeddings + graph + consolidation for writes; and query → agent runtime →
-> retrieval + graph expansion + context assembly + LLM compression → answer for
-> reads — behind an `LLMProvider` port (deterministic offline default) and
-> `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` / `AgentRuntime`
-> ports (sequential & heuristic offline defaults; LangGraph & LLM in production).
-> **Test suite: `379 passing, 7 skipped`** (PyTest; skips are live-Neo4j + the
+> complete** (extraction, consolidation, LLM compression, query-time agent) and
+> **Stage 11 complete** — Advanced Memory Workflows: scheduled evolution sweeps,
+> automatic relationship inference, and rolling summaries. Writes flow raw text →
+> extraction → `CreateMemoryUseCase` → events → embeddings + graph + consolidation
+> + relationship inference; reads flow query → agent runtime → retrieval + graph
+> expansion + context assembly + LLM compression → answer; and scheduled sweeps
+> drive decay/archival/promotion/summary maintenance. Behind an `LLMProvider` port
+> and `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` / `AgentRuntime`
+> / `Scheduler` / `SummaryGenerator` ports (offline defaults throughout).
+> **Test suite: `434 passing, 7 skipped`** (PyTest; skips are live-Neo4j + the
 > LangGraph suites, which skip when those deps/servers are unavailable). The
 > companion deep-dive lives in [`docs/architecture.md`](architecture.md)
-> (sections §1–§18).
+> (sections §1–§19).
 
 ---
 
@@ -209,6 +210,13 @@ place where abstract ports are bound to concrete adapters via FastAPI `Depends`.
 - **Decisions:** single linear pass — no loops, no autonomous planning; guardrails `max_iterations` / `max_tool_calls` / token (context budget + answer cap) / `timeout`; tool-failure recovery — retrieval/graph failures degrade gracefully, context-build failure is terminal `error`; SSE always ends with a `done` event (`error` before it on failure/timeout); no LangGraph type leaves infrastructure; no new background processor (query is synchronous).
 - **Scope:** query answering only — **no** dashboard, observability, multi-agent, or autonomous agents.
 - **Tests:** unit (DTOs, tools + tool set, citation validation, sequential runtime incl. every guard + 3 tool-failure paths + ContextPackage-as-primary + single-retrieval, streaming, query use case) + skip-guarded LangGraph parity/guards + integration (`/query` + `/query/stream` SSE). All offline.
+
+### Stage 11 — Advanced Memory Workflows *(complete)*
+- **Purpose:** Autonomous memory-lifecycle automation layered on existing seams — scheduled evolution, automatic relationship inference, and rolling summaries. No UI/observability/auth/deployment.
+- **Components:** `InProcessScheduler` (implements the `Scheduler` port) + `DecaySweepJob` / `ArchivalSweepJob` / `PromotionSweepJob` / `SummaryRefreshJob`; `RelationshipInferenceService` + `inference_heuristics` + `InferenceEventHandler` + `InferenceJob` + `InProcessMaintenanceJobProcessor`; `MemorySummary` entity + `MemorySummaryRepository` (+ ORM model, mapper, migration `0004`, UoW `summaries`) + `SummaryGenerator` port + `DeterministicSummaryGenerator` + `MemorySummaryService`; `MaintenanceConfig`. New domain methods `Memory.stamp_maintenance`/`was_swept` (event-free) and `GraphConfig.externally_managed_edge_types`.
+- **Decisions:** sweeps reuse `MemoryIntelligenceService` and are tenant-aware/idempotent/resumable (archival & promotion by state guards, decay by a period-stamp); inference is deterministic lexical with a confidence threshold, undirected-pair dedup, and the semantic edge types added to the graph-sync exclude-set so inferred edges survive re-derivation; summaries are derived artifacts stored separately, upserted, versioned-on-change, with provenance, never modifying source memories; the scheduler runs no live ticker (deterministic/offline) — a production driver fires jobs on their crons.
+- **Scope:** lifecycle automation only — **no** UI, observability, auth, or production infra.
+- **Tests:** unit (scheduler, inference heuristics, maintenance processor, summary generator) + integration (sweeps incl. idempotency/resume/tenant, inference incl. dedup/threshold/sync-survival/event handler, summary repository + service, migration structure, workflow orchestration). All offline.
 
 ---
 
@@ -633,7 +641,7 @@ regress the count.
 - **LLM context compression is available but off by default (Stage 10 Phase 3).** `LLMContextCompressor` implements the `ContextCompressor` port behind `CONTEXT_COMPRESSOR=llm`; the heuristic compressor remains the offline default, and the LLM path always falls back to it on any validation/provider failure.
 - **Query-time agent runtime is built (Stage 10 Phase 4) but single-pass.** `POST /query` + `/query/stream` orchestrate the existing pipeline with guardrails; the runtime is linear (no autonomous tool loops yet — the LangGraph runtime is structured to add them). No dashboard, observability, multi-agent, or autonomous-agent behavior (out of scope).
 - **Query-time agent runtime exists (Stage 10 Phase 4); no chat/multi-turn or autonomous tool loops** — single-pass orchestration with guardrails; conversational memory and tool loops are future work.
-- **No background scheduler implementation** — only the `Scheduler` ports; decay/archival/promotion sweeps are manual/API-triggered.
+- **Scheduler is in-process with no live ticker (Stage 11).** `InProcessScheduler` implements the `Scheduler` port and holds the decay/archival/promotion/summary jobs; it triggers them explicitly (`run_job`/`run_all`) rather than on a wall-clock loop. A production cron driver (APScheduler / Celery beat / K8s CronJob) plugs in behind the same port to fire them on schedule.
 - **Vector search is brute-force** in the repository (exact cosine over candidates) — correct but not ANN-scaled; the `list_candidates` port is the seam for a pgvector ANN index.
 - **No observability stack** — JSON logs + correlation IDs exist; no metrics/tracing/dashboards (LangSmith/OTel) yet.
 - **No authn/authz enforcement** — `user_id` is passed in; JWT settings exist but no auth middleware.

@@ -1673,3 +1673,129 @@ the query use case (delegation). LangGraph parity + guards are skip-guarded.
 Integration: `/query` (answer + citation shape + validation 422s + envelope) and
 `/query/stream` (event-stream content-type + frame sequence). All offline —
 fake/deterministic providers, no DB for unit tests, no network.
+
+---
+
+## 19. Stage 11 — Advanced Memory Workflows
+
+Stage 11 adds **autonomous memory maintenance** on top of the existing seams: it
+introduces no new domain capability and no UI/observability/auth/deployment. Four
+workflows — relationship inference, decay, archival, promotion, and summary
+refresh — run off the request path, reusing `MemoryIntelligenceService`, the
+graph abstractions, and the established event-handler / job-processor patterns.
+
+```
+   MemoryCreated ──▶ InferenceEventHandler ──▶ RelationshipInferenceService
+   Scheduled     ──▶ DecaySweepJob / ArchivalSweepJob / PromotionSweepJob
+   Scheduled     ──▶ SummaryRefreshJob ──▶ MemorySummaryService
+```
+
+### 19.1 Files
+
+```
+backend/app/
+├── domain/entities/memory_summary.py            # MemorySummary (derived artifact) + Memory.stamp_maintenance/was_swept
+├── application/
+│   ├── dto/summary_dto.py                        # SummaryRefreshResult
+│   ├── interfaces/
+│   │   ├── scheduler.py                          # (existing ports — now implemented)
+│   │   ├── maintenance_job_processor.py          # InferenceJob + MaintenanceJobProcessor port
+│   │   ├── summary_generator.py                  # SummaryGenerator port
+│   │   ├── summary_repository.py                 # MemorySummaryRepository port
+│   │   └── unit_of_work.py                       # + summaries repository
+│   └── services/maintenance/
+│       ├── config.py                             # MaintenanceConfig
+│       ├── inference_heuristics.py               # pure edge-type + confidence
+│       ├── relationship_inference_service.py
+│       ├── inference_event_handler.py
+│       ├── memory_summary_service.py
+│       ├── summary_refresh_job.py
+│       └── sweeps.py                             # Decay/Archival/Promotion sweeps
+├── infrastructure/
+│   ├── scheduler/in_process_scheduler.py         # InProcessScheduler (Scheduler port)
+│   ├── llm/in_process_maintenance_processor.py   # InProcessMaintenanceJobProcessor
+│   ├── summaries/deterministic_summary_generator.py
+│   └── database/models/memory_summary.py         # ORM model (+ mapper, UoW, models registry)
+└── repositories/memory_summary_repository.py
+backend/alembic/versions/0004_add_memory_summaries.py
+```
+
+### 19.2 Scheduler architecture
+
+The existing `Scheduler` / `ScheduledJob` ports are now implemented by
+`InProcessScheduler`: a registry that `register`s jobs with a cron string
+(metadata for a future driver) and triggers them explicitly via
+`run_job` / `run_all`. `start`/`stop` satisfy the port; **no live ticker runs by
+default**, so maintenance is fully deterministic and offline-testable. A failing
+job is isolated and logged. A production driver (APScheduler / Celery beat / K8s
+CronJob) swaps in behind the same port with no change to the jobs. The lifespan
+registers the three sweeps + the summary-refresh job (gated on
+`MAINTENANCE_ENABLED`).
+
+### 19.3 Scheduled evolution sweeps (Phase A)
+
+Three `ScheduledJob`s reuse `MemoryIntelligenceService` (no new evolution logic),
+are **tenant-aware** (scan `list_for_analytics`, group by `user_id`, optional
+single-tenant scope), **idempotent**, and **resumable**:
+
+- **ArchivalSweepJob** — archives memories the service deems eligible; archived
+  memories drop out of the ACTIVE scan, so re-runs are no-ops.
+- **PromotionSweepJob** — promotes promotable memories, guarded on
+  `not is_promoted` so priority is never double-bumped.
+- **DecaySweepJob** — decay is time-cumulative, so it carries a **period-stamp
+  guard**: `Memory.stamp_maintenance("decay_period", <date>)` (an event-free
+  bookkeeping marker that does not touch `updated_at`). A memory already stamped
+  for the current period is skipped — making a re-run idempotent and an
+  interrupted run resumable; a new period decays again.
+
+### 19.4 Relationship inference strategy (Phase B)
+
+`RelationshipInferenceService` runs on `MemoryCreated` (via `InferenceEventHandler`
+→ `InProcessMaintenanceJobProcessor`). It compares the new memory against a
+bounded recent candidate set and writes graph edges through the existing
+`GraphRepository`. Inference is **deterministic and lexical** (no LLM): confidence
+is the Jaccard overlap of significant entities, boosted by marker words; the edge
+type is chosen from the memory-type pair and markers (DEPENDS_ON / DERIVED_FROM /
+REINFORCES / RELATED_TO). Three guarantees:
+
+- **Confidence threshold** — only edges ≥ the configured threshold are written.
+- **Duplicate-edge prevention** — existing incident edges are read first; an edge
+  whose undirected pair + type already exists is skipped (so re-runs never
+  duplicate, and inference never duplicates a sync-derived edge).
+- **Graph-sync compatibility** — the semantic types (DEPENDS_ON, DERIVED_FROM,
+  REINFORCES) are added to `GraphConfig.externally_managed_edge_types`, which
+  `GraphSyncService` excludes from its delete/re-derive cycle, so inferred edges
+  survive. RELATED_TO stays sync-owned.
+
+### 19.5 Summary storage strategy (Phase C)
+
+`MemorySummaryService` builds **rolling summaries** for the scopes PROJECT / GOAL
+/ EXPERIENCE: per scope it ranks a tenant's ACTIVE memories by score, asks a
+`SummaryGenerator` (`DeterministicSummaryGenerator` = offline extractive, top-N
+contents under a char budget) for the text, and **upserts** one `MemorySummary`
+per `(user, scope)`. Summaries are **derived artifacts stored separately** in a
+new `memory_summaries` table (migration `0004`) — they never modify the source
+memories and are regenerable at any time. Each carries **provenance**
+(`source_memory_ids`, `source_count`) and a **version** that increments only when
+the text changes, so an unchanged refresh is idempotent (no churn). The
+`UnitOfWork` gained a `summaries` repository; the table is cross-dialect
+(SQLite-creatable) like every other.
+
+### 19.6 Workflow orchestration (Phase D)
+
+Wired in the lifespan (gated on `MAINTENANCE_ENABLED`): `InferenceEventHandler`
+registers on the dispatcher for `MemoryCreated`; the `InProcessScheduler` holds
+the decay/archival/promotion sweeps and the summary-refresh job on their crons;
+the maintenance processor is drained and the scheduler stopped on shutdown — all
+mirroring the existing embedding/graph/consolidation pipelines.
+
+### 19.7 Tests
+
+Unit: scheduler (register/run/isolation/lifecycle), inference heuristics (each
+edge type, threshold, confidence range), maintenance processor, summary
+generator. Integration: the three sweeps (decay incl. idempotency/resume,
+archival, promotion, tenant-awareness), relationship inference (write, dedup,
+threshold, sync-survival, event handler), summary repository + service
+(create/upsert/version/provenance/non-mutation), migration structure, and the
+end-to-end workflow orchestration (event-driven inference + scheduled jobs). All
+offline — SQLite + in-memory graph + deterministic generator; no real services.

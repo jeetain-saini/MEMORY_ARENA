@@ -20,6 +20,7 @@ from app.application.interfaces.repositories import (
     MemoryRepository,
     MemoryVersionRepository,
 )
+from app.application.interfaces.summary_repository import MemorySummaryRepository
 
 
 class UnitOfWork(ABC):
@@ -29,6 +30,7 @@ class UnitOfWork(ABC):
     relations: MemoryRelationRepository
     versions: MemoryVersionRepository
     embeddings: MemoryEmbeddingRepository
+    summaries: MemorySummaryRepository
 
     @abstractmethod
     async def __aenter__(self) -> "UnitOfWork": ...

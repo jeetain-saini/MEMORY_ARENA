@@ -203,6 +203,29 @@ class Memory:
             )
         )
 
+    # -- Maintenance bookkeeping -------------------------------------------
+    #: Reserved metadata key holding maintenance markers (e.g. decay periods).
+    _MAINTENANCE_KEY = "_maintenance"
+
+    def stamp_maintenance(self, marker: str, value: str) -> None:
+        """Record a maintenance marker (e.g. the last decay period) in metadata.
+
+        Pure bookkeeping for idempotent/resumable maintenance sweeps: it records
+        *that* a periodic job processed this memory, without changing the
+        memory's meaning. It records **no domain event** and does not touch
+        ``updated_at`` (so it never looks like activity to archival).
+        """
+        markers = self.metadata.get(self._MAINTENANCE_KEY)
+        if not isinstance(markers, dict):
+            markers = {}
+        markers[marker] = value
+        self.metadata[self._MAINTENANCE_KEY] = markers
+
+    def was_swept(self, marker: str, value: str) -> bool:
+        """Whether this memory already carries ``marker == value``."""
+        markers = self.metadata.get(self._MAINTENANCE_KEY)
+        return isinstance(markers, dict) and markers.get(marker) == value
+
     # -- Derived ------------------------------------------------------------
     @property
     def total_score(self) -> float:

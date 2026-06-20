@@ -16,7 +16,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
-from app.application.dto.graph_dto import GraphEdgeType
 from app.application.interfaces.graph_job_processor import GraphSyncAction, GraphSyncJob
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.unit_of_work import UnitOfWork
@@ -59,10 +58,11 @@ class GraphSyncService:
 
         # Re-derive: drop this node's existing edges so an update never leaves a
         # stale edge behind, then write the freshly derived ones.
-        # Externally-managed edge types (e.g. CONTRADICTS from consolidation) are
+        # Externally-managed edge types (CONTRADICTS from consolidation;
+        # DEPENDS_ON / DERIVED_FROM / REINFORCES from relationship inference) are
         # excluded — they are not re-derived here and must not be deleted.
-        _SYNC_EXCLUDE = frozenset({GraphEdgeType.CONTRADICTS})
-        for existing in await self._repo.get_edges(node.node_id, exclude_types=_SYNC_EXCLUDE):
+        exclude = self._config.externally_managed_edge_types
+        for existing in await self._repo.get_edges(node.node_id, exclude_types=exclude):
             await self._repo.delete_edge(
                 existing.source_id, existing.target_id, existing.edge_type
             )

@@ -34,6 +34,18 @@ from app.application.services.graph.event_handler import GraphEventHandler
 from app.application.services.graph.relationship_service import GraphRelationshipService
 from app.application.services.graph.sync_service import GraphSyncService
 from app.application.services.intelligence_config import IntelligenceConfig
+from app.application.services.maintenance.config import MaintenanceConfig
+from app.application.services.maintenance.inference_event_handler import InferenceEventHandler
+from app.application.services.maintenance.memory_summary_service import MemorySummaryService
+from app.application.services.maintenance.relationship_inference_service import (
+    RelationshipInferenceService,
+)
+from app.application.services.maintenance.summary_refresh_job import SummaryRefreshJob
+from app.application.services.maintenance.sweeps import (
+    ArchivalSweepJob,
+    DecaySweepJob,
+    PromotionSweepJob,
+)
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
@@ -52,7 +64,14 @@ from app.infrastructure.llm.graphs.factory import build_consolidation_engine, bu
 from app.infrastructure.llm.in_process_consolidation_processor import (
     InProcessConsolidationJobProcessor,
 )
+from app.infrastructure.llm.in_process_maintenance_processor import (
+    InProcessMaintenanceJobProcessor,
+)
 from app.infrastructure.llm.in_process_workflow_processor import InProcessWorkflowJobProcessor
+from app.infrastructure.scheduler.in_process_scheduler import InProcessScheduler
+from app.infrastructure.summaries.deterministic_summary_generator import (
+    DeterministicSummaryGenerator,
+)
 
 _logger = logging.getLogger("memoryarena.lifecycle")
 
@@ -133,6 +152,45 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     consolidation_processor = InProcessConsolidationJobProcessor(consolidation_service.process)
     ConsolidationEventHandler(consolidation_processor).register(in_process_dispatcher)
     app.state.consolidation_processor = consolidation_processor
+
+    # --- Wire the Stage 11 maintenance workflows -------------------------
+    # Event-driven relationship inference (MemoryCreated -> inference job) plus a
+    # scheduler holding the decay/archival/promotion/summary jobs. The scheduler
+    # runs no live ticker by default; a production driver fires jobs on their
+    # crons. All reuse existing services and run off the request path.
+    maintenance_processor = None
+    scheduler = InProcessScheduler()
+    if settings.maintenance_enabled:
+        uow_factory = lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)  # noqa: E731
+        maintenance_config = MaintenanceConfig(
+            inference_confidence_threshold=settings.inference_confidence_threshold,
+            inference_candidate_pool=settings.inference_candidate_pool,
+            summary_top_n=settings.summary_top_n,
+            summary_max_chars=settings.summary_max_chars,
+        )
+
+        inference_service = RelationshipInferenceService(
+            uow_factory=uow_factory,
+            graph_repo=build_graph_repository(),
+            config=maintenance_config,
+            graph_config=graph_config,
+        )
+        maintenance_processor = InProcessMaintenanceJobProcessor(inference_service.process)
+        InferenceEventHandler(maintenance_processor).register(in_process_dispatcher)
+        app.state.maintenance_processor = maintenance_processor
+
+        def _intelligence() -> MemoryIntelligenceService:
+            return MemoryIntelligenceService(uow_factory(), in_process_dispatcher, IntelligenceConfig())
+
+        summary_service = MemorySummaryService(
+            uow_factory, DeterministicSummaryGenerator(), maintenance_config
+        )
+        scheduler.register(DecaySweepJob(uow_factory, _intelligence), cron=settings.decay_cron)
+        scheduler.register(ArchivalSweepJob(uow_factory, _intelligence), cron=settings.archival_cron)
+        scheduler.register(PromotionSweepJob(uow_factory, _intelligence), cron=settings.promotion_cron)
+        scheduler.register(SummaryRefreshJob(uow_factory, summary_service), cron=settings.summary_cron)
+        await scheduler.start()
+    app.state.scheduler = scheduler
     _logger.info("startup.complete")
 
     try:
@@ -144,6 +202,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await graph_processor.drain()
         await workflow_processor.drain()
         await consolidation_processor.drain()
+        if maintenance_processor is not None:
+            await maintenance_processor.drain()
+        await scheduler.stop()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()
         await postgres_manager.disconnect()

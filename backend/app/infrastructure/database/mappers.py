@@ -8,10 +8,13 @@ without a database.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.application.dto.embedding_dto import EmbeddingRecord
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_relation import MemoryRelation
 from app.domain.entities.memory_score import MemoryScore
+from app.domain.entities.memory_summary import MemorySummary
 from app.domain.entities.memory_version import MemoryVersion
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
@@ -20,6 +23,7 @@ from app.infrastructure.database.models.memory import MemoryModel
 from app.infrastructure.database.models.memory_embedding import MemoryEmbeddingModel
 from app.infrastructure.database.models.memory_relation import MemoryRelationModel
 from app.infrastructure.database.models.memory_score import MemoryScoreModel
+from app.infrastructure.database.models.memory_summary import MemorySummaryModel
 from app.infrastructure.database.models.memory_version import MemoryVersionModel
 
 
@@ -177,4 +181,33 @@ def model_to_embedding(model: MemoryEmbeddingModel) -> EmbeddingRecord:
         model_name=model.model_name,
         dimensions=model.dimensions,
         created_at=model.created_at,
+    )
+
+
+# --- MemorySummary <-> MemorySummaryModel ----------------------------------
+def summary_to_model(summary: MemorySummary) -> MemorySummaryModel:
+    return MemorySummaryModel(
+        id=summary.id,
+        user_id=summary.user_id,
+        scope=summary.scope.value,
+        summary_text=summary.summary_text,
+        source_memory_ids=[str(mid) for mid in summary.source_memory_ids],
+        source_count=summary.source_count,
+        version=summary.version,
+        created_at=summary.created_at,
+        updated_at=summary.updated_at,
+    )
+
+
+def model_to_summary(model: MemorySummaryModel) -> MemorySummary:
+    return MemorySummary(
+        id=model.id,
+        user_id=model.user_id,
+        scope=MemoryType(model.scope),
+        summary_text=model.summary_text,
+        source_memory_ids=[UUID(mid) for mid in (model.source_memory_ids or [])],
+        source_count=model.source_count,
+        version=model.version,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )

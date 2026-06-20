@@ -106,6 +106,20 @@ class Settings(BaseSettings):
     agent_max_tokens: int = 2000
     agent_answer_max_tokens: int = 512
 
+    # --- Maintenance workflows (Stage 11) ---------------------------------
+    # When enabled, the lifespan registers the inference handler and the
+    # scheduled sweeps/summary jobs. The in-process scheduler runs no live
+    # ticker by default; a production driver triggers jobs on these crons.
+    maintenance_enabled: bool = True
+    inference_confidence_threshold: float = 0.5
+    inference_candidate_pool: int = 50
+    summary_top_n: int = 10
+    summary_max_chars: int = 1200
+    decay_cron: str = "0 3 * * *"
+    archival_cron: str = "0 4 * * *"
+    promotion_cron: str = "0 5 * * *"
+    summary_cron: str = "0 6 * * *"
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

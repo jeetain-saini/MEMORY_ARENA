@@ -15,6 +15,7 @@ from app.infrastructure.database.models.memory_embedding import (
 )
 from app.infrastructure.database.models.memory_relation import MemoryRelationModel
 from app.infrastructure.database.models.memory_score import MemoryScoreModel
+from app.infrastructure.database.models.memory_summary import MemorySummaryModel
 from app.infrastructure.database.models.memory_version import MemoryVersionModel
 from app.infrastructure.database.models.user import UserModel
 
@@ -25,5 +26,6 @@ __all__ = [
     "MemoryRelationModel",
     "MemoryVersionModel",
     "MemoryEmbeddingModel",
+    "MemorySummaryModel",
     "EMBEDDING_DIM",
 ]

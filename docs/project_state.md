@@ -6,14 +6,16 @@
 > behavior, the decisions made and *why*, the known gaps, and the rules a future
 > contributor must follow to **continue** the architecture rather than redesign it.
 >
-> **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phase 1
-> (LangGraph Memory Extraction) complete**. Raw text → extraction workflow →
-> `CreateMemoryUseCase` → events → embeddings + graph, behind an `LLMProvider`
-> port (deterministic offline default) and a `WorkflowEngine` port (sequential
-> offline default; LangGraph in production). **Test suite: `243 passing,
-> 5 skipped`** (PyTest; skips are live-Neo4j + the LangGraph-engine suite, which
-> skip when those deps/servers are unavailable). The companion deep-dive lives in
-> [`docs/architecture.md`](architecture.md) (sections §1–§16).
+> **Status at handoff:** Stages 0–9 complete and verified; **Stage 10 Phases 1–3
+> complete** — LangGraph Memory Extraction (Phase 1), write-time Consolidation &
+> Conflict Resolution (Phase 2), and LLM Context Compression (Phase 3). Raw text →
+> extraction workflow → `CreateMemoryUseCase` → events → embeddings + graph +
+> consolidation, behind an `LLMProvider` port (deterministic offline default) and
+> `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` ports (sequential
+> & heuristic offline defaults; LangGraph & LLM in production). **Test suite:
+> `329 passing, 6 skipped`** (PyTest; skips are live-Neo4j + the LangGraph-engine
+> suites, which skip when those deps/servers are unavailable). The companion
+> deep-dive lives in [`docs/architecture.md`](architecture.md) (sections §1–§17).
 
 ---
 
@@ -184,6 +186,19 @@ place where abstract ports are bound to concrete adapters via FastAPI `Depends`.
 - **Decisions:** LangGraph is a driver confined to `infrastructure/llm/` (lazy import); workflow returns **DTOs only** and never touches repositories/DB/embeddings/Neo4j; all writes go through `CreateMemoryUseCase` so events drive embeddings + graph; async background execution (drained on shutdown); `ExtractionResult.workflow_version` traces workflow generations; offline-first (deterministic provider + sequential engine).
 - **Scope:** extraction only — **no** chat agent, RAG runtime, query-time workflow, consolidation, or LLM compressor.
 - **Tests:** unit (provider, workflow, job processor) + integration (ingest use case end-to-end → embeddings + graph; `/ingest` API) + LangGraph-engine suite (skipped when `langgraph` absent).
+
+### Stage 10 — Consolidation & Conflict Resolution *(Phase 2 complete)*
+- **Purpose:** Write-time, persistent consolidation: a new memory is compared against the user's recent ACTIVE corpus; near-duplicates are archived (SUPERSEDES) and contradictions are recorded as durable `CONTRADICTS` graph edges.
+- **Components:** `ConsolidationEngine` port + shared `consolidation_steps` (score→classify→enrich→validate) + `SequentialConsolidationEngine` (offline default) and `LangGraphConsolidationEngine` (lazy `langgraph`); `ConsolidationJobProcessor` + `InProcessConsolidationJobProcessor`; `ConsolidationEventHandler` (subscribes `MemoryCreated`); `PersistentConsolidationService`; new domain events `MemorySuperseded` / `MemoryConflictFound`; `get_edges(exclude_types=…)` on the graph repository so `GraphSyncService` re-derivation never deletes externally-managed `CONTRADICTS` edges.
+- **Decisions:** event-driven off the request path (mirrors embeddings/graph); confidence asymmetry — SUPERSEDES (archive) needs `≥ 0.80`, CONTRADICTS needs `≥ 0.60`; MERGE is enum-reserved but informational only; consolidation never reads stored embeddings (avoids the embedding-pipeline race) — sequential engine uses Jaccard; subscribes only to `MemoryCreated` (no circular event chain).
+- **Tests:** unit (steps, sequential engine, job processor) + integration (CONTRADICTS edge durability, persistent service, event wiring) + LangGraph-engine suite (skipped when `langgraph` absent).
+
+### Stage 10 — LLM Context Compression *(Phase 3 complete)*
+- **Purpose:** Optional LLM summarization at the final compression step of the Stage 8 context-assembly pipeline; the heuristic compressor remains the offline default.
+- **Components:** `ContextCompressor.compress()` made **async**; `LLMContextCompressor` (`infrastructure/llm/compressors/`) + `compression_prompts` (structured, budget-aware) + `compression_validation` (5 checks: parse, token, required-section, contradiction-preservation, goal-preservation) + `build_context_compressor` factory (`CONTEXT_COMPRESSOR`); reuses the Phase 1 `LLMProvider` port/adapters. `get_context_builder_service` injects the compressor via `Depends`.
+- **Decisions:** the LLM is never trusted blindly — any validation failure, provider exception, empty/oversized response routes to the heuristic fallback, so context generation can never fail or exceed `max_tokens`; the deterministic provider echoes its prompt → the offline default path always exercises the fallback; provenance (`memory_id`, `memory_type`, conflict/consolidation records) is preserved; existing `ContextPackage` DTOs and `/context/*` API contracts unchanged.
+- **Scope:** compression only — **no** query-time agent, chat, or RAG generation.
+- **Tests:** unit (prompts, each validator, compressor accept/fallback branches, factory selection) + integration (builder pipeline with LLM compressor: valid output, graceful fallback, end-to-end budget, debug stats, provenance). All offline.
 
 ---
 
@@ -604,8 +619,8 @@ regress the count.
   unit + integration tests, and a live-Neo4j suite (skipped when no server) all
   in place. Default backend remains in-memory (offline-first); the Neo4j path is
   exercised by the live suite when a server is available.
-- **LangGraph: extraction only (Stage 10 Phase 1).** The extraction workflow exists in `infrastructure/llm/graphs`; consolidation/conflict-resolution, the LLM compressor, and any query-time agent/RAG runtime are **not** built (later phases). `infrastructure/llm/chains` is still an empty placeholder.
-- **No LLM-based context compression** — only the heuristic compressor; `LLMCompressor` is a future port impl.
+- **LangGraph: extraction + consolidation (Stage 10 Phases 1–2).** The extraction and consolidation workflows exist in `infrastructure/llm/graphs`; any query-time agent/RAG runtime is **not** built (later stage). `infrastructure/llm/chains` is still an empty placeholder.
+- **LLM context compression is available but off by default (Stage 10 Phase 3).** `LLMContextCompressor` implements the `ContextCompressor` port behind `CONTEXT_COMPRESSOR=llm`; the heuristic compressor remains the offline default, and the LLM path always falls back to it on any validation/provider failure.
 - **No agent runtime / chat generation / RAG response** — by design; out of scope so far.
 - **No background scheduler implementation** — only the `Scheduler` ports; decay/archival/promotion sweeps are manual/API-triggered.
 - **Vector search is brute-force** in the repository (exact cosine over candidates) — correct but not ANN-scaled; the `list_candidates` port is the seam for a pgvector ANN index.

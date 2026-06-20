@@ -15,6 +15,7 @@ from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.application.interfaces.context_compressor import ContextCompressor
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
@@ -25,7 +26,6 @@ from app.application.interfaces.workflow_job_processor import WorkflowJobProcess
 from app.application.services.graph.config import GraphConfig
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
 from app.application.services.graph.traversal_service import GraphTraversalService
-from app.application.services.context.compressor import HeuristicContextCompressor
 from app.application.services.context.config import ContextConfig
 from app.application.services.context.conflict_detector import ConflictDetector
 from app.application.services.context.consolidation_service import MemoryConsolidationService
@@ -49,6 +49,7 @@ from app.infrastructure.database.postgres import postgres_manager
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.infrastructure.embeddings.factory import build_embedding_provider
 from app.infrastructure.events.in_process_dispatcher import in_process_dispatcher
+from app.infrastructure.llm.compressors.factory import build_context_compressor
 from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.neo4j import neo4j_manager
 
@@ -204,9 +205,19 @@ def get_context_config() -> ContextConfig:
     return ContextConfig()
 
 
+def get_context_compressor() -> ContextCompressor:
+    """Provide the configured context compressor (process-wide singleton).
+
+    Defaults to the heuristic compressor; ``CONTEXT_COMPRESSOR=llm`` selects the
+    LLM compressor (which itself falls back to the heuristic on any failure).
+    """
+    return build_context_compressor()
+
+
 def get_context_builder_service(
     retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
     config: ContextConfig = Depends(get_context_config),
+    compressor: ContextCompressor = Depends(get_context_compressor),
 ) -> ContextBuilderService:
     """Assemble the Context Assembly pipeline for a request."""
     token_counter = HeuristicTokenCounter()
@@ -215,7 +226,7 @@ def get_context_builder_service(
         selection_service=MemorySelectionService(token_counter),
         consolidation_service=MemoryConsolidationService(config.dedup_threshold),
         conflict_detector=ConflictDetector(config.conflict_threshold),
-        compressor=HeuristicContextCompressor(token_counter),
+        compressor=compressor,
     )
 
 

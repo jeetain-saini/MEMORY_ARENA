@@ -1415,3 +1415,130 @@ Unit (deterministic provider, sequential workflow, job processor) + integration
 `/ingest` API contract). A LangGraph engine suite `importorskip`s `langgraph`
 (skips offline, like the live-Neo4j suite) and asserts the graph engine produces
 the same memories as the sequential engine. All offline — no API keys, no network.
+
+---
+
+## 17. Stage 10 (Phase 3) — LLM Context Compression
+
+Stage 10 Phase 3 adds an **optional LLM compressor** to the Stage 8 context
+assembly pipeline. It is **not** a chat agent, query-time reasoner, or RAG
+generator — it sits at exactly one point in the existing pipeline, replacing the
+final compression step with an LLM summarization that is **validated and
+fallback-guarded**. The heuristic compressor remains the offline default.
+
+```
+   Retrieval → Selection → Conflict Detection → Consolidation
+        → LLM Compression (validated; heuristic fallback) → Context Package
+```
+
+### 17.1 Files
+
+```
+backend/app/
+├── application/
+│   ├── interfaces/context_compressor.py        # port: compress() is now async
+│   └── services/context/
+│       ├── compressor.py                        # HeuristicContextCompressor (async, unchanged body)
+│       └── context_builder.py                   # awaits compressor.compress()
+└── infrastructure/llm/compressors/
+    ├── compression_prompts.py                   # system prompt + structured prompt builder
+    ├── compression_validation.py                # 5-check output validator
+    ├── llm_compressor.py                         # LLMContextCompressor
+    └── factory.py                                # build_context_compressor (CONTEXT_COMPRESSOR)
+
+backend/tests/
+├── unit/        test_compression_prompts · test_compression_validation
+│                test_llm_compressor · test_compressor_factory
+│                (test_compression updated: async)
+└── integration/ test_llm_context_builder
+```
+
+### 17.2 Async port conversion
+
+The `ContextCompressor` port's `compress()` became **`async`** so an
+implementation may call an `LLMProvider`. The blast radius is minimal: the
+`HeuristicContextCompressor` body is unchanged (it simply no longer needs to be
+sync), and `ContextBuilderService._assemble()` gains one `await`. All existing
+DTOs (`CompressionResult`, `CompressionStats`, `ContextPackage`) and the
+`/context/build` · `/context/debug` API contracts are **unchanged**.
+
+### 17.3 Provider architecture
+
+`LLMContextCompressor` reuses the **Stage 10 Phase 1 `LLMProvider` port** — the
+same `DeterministicLLMProvider` (offline default), `OpenAIProvider`, and
+`AnthropicProvider` adapters, selected by the existing `LLM_PROVIDER` setting. No
+SDK is imported outside `infrastructure/`. Selection of the compressor itself is
+config-driven via `CONTEXT_COMPRESSOR` (`heuristic` default, or `llm`) through a
+cached factory — the same pattern as the embedding and LLM provider factories.
+
+### 17.4 Prompt architecture
+
+`compression_prompts.py` builds a **deterministic, structured** prompt: a fixed
+system prompt that mandates preservation of facts/goals/preferences/projects and
+**both sides of any contradiction**, and a user prompt that renders each memory
+as a `[TYPE] (score) content` line and states an explicit character budget
+(`max_tokens × 4`, matching the heuristic token counter's ratio). The budget in
+the prompt is a *steer*, never the guarantee — the guarantee is the
+post-generation token validation.
+
+### 17.5 Output validation (never trust the LLM)
+
+Before an LLM response is accepted, `compression_validation.py` runs five checks
+in order; the **first failure** routes to the fallback:
+
+1. **parse** — non-empty, textual response.
+2. **token** — `count(output) ≤ max_tokens` (the hard budget guarantee).
+3. **required-section** — every input memory type's `[TYPE]` marker is present.
+4. **contradiction preservation** — every *negated* memory (a contradiction
+   signal, detected with the `ConflictDetector` negation vocabulary) keeps at
+   least one significant term in the output, so a disagreement can never be
+   silently summarized away.
+5. **goal preservation** — every `GOAL` memory keeps at least one significant
+   term in the output.
+
+"Significant term" reuses the `ConflictDetector` stopword/negation vocabulary, so
+validation and conflict detection agree on what is meaningful.
+
+### 17.6 Fallback strategy (context generation can never fail)
+
+```
+provider raises ─────────────┐
+empty / parse failure ───────┤
+budget exceeded ─────────────┼──▶ await HeuristicContextCompressor.compress(...)
+missing section ─────────────┤
+contradiction/goal dropped ──┘
+```
+
+The fallback is the deterministic `HeuristicContextCompressor`: no I/O, always
+terminates, always produces output within budget (it prunes). Because the
+`DeterministicLLMProvider` echoes its prompt (which exceeds any real budget),
+the **offline default path always exercises the fallback** — so tests and dev
+run fully offline with the same budget guarantee as Stage 8.
+
+### 17.7 Provenance preservation
+
+On the accepted LLM path the returned `CompressionResult` carries the **original
+`ContextMemory` objects** (their `memory_id` and `memory_type` intact) and drops
+nothing (`removed=[]`). Conflict records and consolidation records are produced
+*upstream* by the builder (before compression) and are unaffected by the
+compressor choice, so the `/context/debug` provenance is identical for both
+compressors.
+
+### 17.8 Token-budget guarantee
+
+Enforced in the same two places as Stage 8 — **selection** (greedy budget fill)
+and **compression** (final guarantee). On the LLM path the final guarantee is the
+token-validation check: any response over `max_tokens` is rejected in favor of the
+heuristic, which always fits. So `ContextPackage.total_tokens ≤ max_tokens`
+**always** holds, regardless of compressor.
+
+### 17.9 Tests
+
+Unit: prompt construction, each of the five validators, and the compressor's
+accept/validate/fallback branches (empty response, provider exception, budget
+exceeded, missing section, dropped contradiction, dropped goal, budget guarantees
+on both paths, deterministic-provider fallback, provenance). Factory:
+config-driven selection (`heuristic`/`llm`, case-insensitive, fallback wired).
+Integration: the full builder pipeline with the LLM compressor — valid LLM
+output, graceful fallback on error, end-to-end budget enforcement, debug stats,
+and provenance survival. All offline (fake/deterministic providers; no network).

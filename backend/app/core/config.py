@@ -89,6 +89,12 @@ class Settings(BaseSettings):
     consolidation_contradict_confidence: float = 0.60
     consolidation_supersede_confidence: float = 0.80
 
+    # --- Context compression ----------------------------------------------
+    # Compressor for the context-assembly pipeline: "heuristic" (offline
+    # default; whitespace + budget pruning, no LLM) or "llm" (LLM summarization
+    # with validation and heuristic fallback).
+    context_compressor: str = "heuristic"
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

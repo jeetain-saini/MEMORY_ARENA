@@ -81,7 +81,9 @@ class ContextBuilderService:
         selection = self._selection.select(retrieval.results, request.max_tokens)
         consolidation = self._consolidation.consolidate(selection.selected)
         conflicts = self._conflicts.detect(consolidation.consolidated)
-        compression = self._compressor.compress(consolidation.consolidated, request.max_tokens)
+        compression = await self._compressor.compress(
+            consolidation.consolidated, request.max_tokens
+        )
 
         package = ContextPackage(
             query=request.query,

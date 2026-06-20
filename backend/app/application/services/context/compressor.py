@@ -25,7 +25,9 @@ class HeuristicContextCompressor(ContextCompressor):
     def __init__(self, token_counter: TokenCounter) -> None:
         self._counter = token_counter
 
-    def compress(self, memories: list[ContextMemory], max_tokens: int) -> CompressionResult:
+    async def compress(
+        self, memories: list[ContextMemory], max_tokens: int
+    ) -> CompressionResult:
         original_tokens = sum(m.tokens for m in memories)
 
         # 1. Whitespace normalization.

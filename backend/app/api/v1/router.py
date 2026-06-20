@@ -15,6 +15,7 @@ from app.api.v1.routes import (
     health,
     ingest,
     memories,
+    observability,
     query,
     retrieval,
     summaries,
@@ -29,3 +30,4 @@ api_router.include_router(graph.router)
 api_router.include_router(ingest.router)
 api_router.include_router(query.router)
 api_router.include_router(summaries.router)
+api_router.include_router(observability.router)

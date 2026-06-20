@@ -16,14 +16,17 @@ from fastapi import APIRouter, Query, status
 
 from app.api.v1.dependencies.providers import (
     MemoryAnalyticsServiceDep,
+    MemoryHealthServiceDep,
     MemoryIntelligenceServiceDep,
     MemoryServiceDep,
 )
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.services.memory_service import MemoryService
+from app.application.services.observability.memory_health_service import MemoryHealthService
 from app.core.logging import get_request_id
 from app.schemas.analytics import AnalyticsResponseSchema
+from app.schemas.health import MemoryHealthResponseSchema
 from app.schemas.memory import (
     CreateMemoryRequestSchema,
     MemoryResponseSchema,
@@ -92,6 +95,19 @@ async def memory_analytics(
 ) -> APIResponse[AnalyticsResponseSchema]:
     result = await service.get_analytics(user_id)
     return _ok(AnalyticsResponseSchema.from_dto(result))
+
+
+@router.get(
+    "/health",
+    response_model=APIResponse[MemoryHealthResponseSchema],
+    summary="Memory health metrics (growth, rates, graph density, summary coverage)",
+)
+async def memory_health(
+    service: MemoryHealthService = MemoryHealthServiceDep,
+    user_id: UUID | None = Query(default=None, description="Optional: scope to one user"),
+) -> APIResponse[MemoryHealthResponseSchema]:
+    result = await service.get_health(user_id)
+    return _ok(MemoryHealthResponseSchema.from_dto(result))
 
 
 @router.get(

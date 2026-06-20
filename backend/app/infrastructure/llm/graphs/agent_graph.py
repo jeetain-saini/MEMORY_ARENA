@@ -27,6 +27,7 @@ from app.application.dto.agent_dto import (
     AgentStreamEvent,
 )
 from app.application.interfaces.agent_runtime import AgentRuntime
+from app.application.interfaces.clock import Clock
 from app.application.interfaces.llm_provider import LLMProvider
 from app.application.interfaces.token_counter import TokenCounter
 from app.application.services.agent.toolset import AgentToolSet
@@ -39,12 +40,14 @@ class LangGraphAgentRuntime(AgentRuntime):
         toolset: AgentToolSet,
         provider: LLMProvider,
         token_counter: TokenCounter,
+        clock: Clock | None = None,
     ) -> None:
         from langgraph.graph import END, START, StateGraph  # lazy import
 
         self._toolset = toolset
         self._provider = provider
         self._counter = token_counter
+        self._clock = clock
 
         builder: StateGraph = StateGraph(AgentState)
         builder.add_node("retrieve", self._node(lambda s: agent_steps.node_retrieve(s, toolset)))
@@ -71,7 +74,7 @@ class LangGraphAgentRuntime(AgentRuntime):
     async def respond(self, request: AgentRequest) -> AgentResponse:
         import asyncio
 
-        state = agent_steps.init_state(request)
+        state = agent_steps.init_state(request, clock=self._clock)
         try:
             result = await asyncio.wait_for(
                 self._graph.ainvoke(state), timeout=request.config.timeout_seconds
@@ -87,7 +90,7 @@ class LangGraphAgentRuntime(AgentRuntime):
     async def stream(self, request: AgentRequest) -> AsyncIterator[AgentStreamEvent]:
         # Streaming reuses the shared event generator (the graph is the respond
         # path; per-node astream can be added when tool loops land).
-        state = agent_steps.init_state(request)
+        state = agent_steps.init_state(request, clock=self._clock)
         async for event in agent_steps.stream_with_timeout(
             state, self._toolset, self._provider, self._counter, request.config.timeout_seconds
         ):

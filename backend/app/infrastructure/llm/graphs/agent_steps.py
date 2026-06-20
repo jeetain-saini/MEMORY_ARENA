@@ -21,6 +21,7 @@ the answer is generated from.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from app.application.dto.agent_dto import (
     FINISH_ERROR,
@@ -36,10 +37,20 @@ from app.application.dto.agent_dto import (
     AgentStreamEvent,
     AgentTrace,
 )
+from app.application.dto.observability_dto import (
+    ContextTrace,
+    GraphExpansionTrace,
+    RequestTrace,
+    RetrievalTrace,
+    SeedExpansion,
+    StepTiming,
+)
+from app.application.interfaces.clock import Clock
 from app.application.interfaces.llm_provider import LLMProvider
 from app.application.interfaces.token_counter import TokenCounter
 from app.application.services.agent.citation_validation import build_citations
 from app.application.services.agent.toolset import AgentToolSet
+from app.infrastructure.observability.monotonic_clock import MonotonicClock
 
 AGENT_VERSION = "agent-v1"
 
@@ -52,24 +63,27 @@ ANSWER_SYSTEM_PROMPT = (
 
 # --- state init / response assembly ----------------------------------------
 
-def init_state(request: AgentRequest) -> AgentState:
+def init_state(request: AgentRequest, *, clock: Clock | None = None) -> AgentState:
     state = AgentState(
         user_id=request.user_id,
         query=request.query,
         config=request.config,
         metadata=dict(request.metadata),
+        clock=clock or MonotonicClock(),
     )
     state.messages.append(AgentMessage(role="user", content=request.query))
     return state
 
 
 def to_response(state: AgentState) -> AgentResponse:
+    total_duration_ms = round(sum(s.duration_ms for s in state.steps), 3)
     trace = AgentTrace(
         steps=list(state.steps),
         iterations=state.iteration,
         tool_calls=state.tool_calls,
         total_tokens=state.total_tokens,
         finish_reason=state.finish_reason,
+        total_duration_ms=total_duration_ms,
     )
     return AgentResponse(
         query=state.query,
@@ -78,7 +92,20 @@ def to_response(state: AgentState) -> AgentResponse:
         citations=list(state.citations),
         trace=trace,
         finish_reason=state.finish_reason,
+        request_trace=build_request_trace(state),
     )
+
+
+# --- timing helpers ---------------------------------------------------------
+
+def _now(state: AgentState) -> float:
+    return state.clock.now() if state.clock is not None else 0.0
+
+
+def _elapsed_ms(state: AgentState, start: float) -> float:
+    if state.clock is None:
+        return 0.0
+    return round((state.clock.now() - start) * 1000.0, 3)
 
 
 # --- guard / termination helpers -------------------------------------------
@@ -95,7 +122,9 @@ async def _invoke(state: AgentState, tool, step_label: str, *, critical: bool) -
         _terminate(state, FINISH_MAX_TOOL_CALLS, step_label)
         return
     state.tool_calls += 1
+    start = _now(state)
     step = await tool.run(state)  # tools catch their own service errors
+    step = replace(step, duration_ms=_elapsed_ms(state, start))
     state.steps.append(step)
     state.total_tokens += step.tokens
     if not step.ok and critical:
@@ -143,6 +172,74 @@ def _finalize_citations(state: AgentState) -> None:
     )
 
 
+# --- request-scoped trace assembly (Stage 13 observability) ----------------
+
+def build_request_trace(state: AgentState) -> RequestTrace:
+    """Assemble the request-scoped trace from the agent state.
+
+    Pure projection over data the pipeline already produced (retrieval, graph
+    expansion, context package, per-stage timings). Re-runs nothing.
+    """
+    timings = [StepTiming(step=s.step, duration_ms=s.duration_ms, ok=s.ok) for s in state.steps]
+    total_duration_ms = round(sum(s.duration_ms for s in state.steps), 3)
+
+    retrieval_trace: RetrievalTrace | None = None
+    if state.retrieved is not None:
+        retrieval_trace = RetrievalTrace(
+            query=state.query,
+            candidate_count=state.retrieved.count,
+            returned_count=len(state.retrieved.results),
+            top_scores=[round(r.final_score, 6) for r in state.retrieved.results[:20]],
+            duration_ms=_step_duration(state, "retrieve"),
+        )
+
+    graph_trace: GraphExpansionTrace | None = None
+    if state.expanded is not None:
+        graph_results = [m for m in state.expanded.results if m.provenance == "graph"]
+        seed_counts: dict[object, int] = {}
+        for m in graph_results:
+            if m.source_memory_id is not None:
+                seed_counts[m.source_memory_id] = seed_counts.get(m.source_memory_id, 0) + 1
+        graph_trace = GraphExpansionTrace(
+            enabled=state.config.expand_graph,
+            hybrid_count=state.expanded.hybrid_count,
+            graph_count=state.expanded.graph_count,
+            influence_scores=[round(m.score, 6) for m in graph_results[:20]],
+            seeds=[SeedExpansion(seed_memory_id=sid, neighbors_admitted=n) for sid, n in seed_counts.items()],
+            duration_ms=_step_duration(state, "expand"),
+        )
+
+    context_trace: ContextTrace | None = None
+    package = state.context_package
+    if package is not None:
+        utilization = round(package.total_tokens / package.max_tokens, 6) if package.max_tokens else 0.0
+        context_trace = ContextTrace(
+            memory_count=len(package.memories),
+            total_tokens=package.total_tokens,
+            max_tokens=package.max_tokens,
+            budget_utilization=utilization,
+            duration_ms=_step_duration(state, "build_context"),
+        )
+
+    return RequestTrace(
+        query=state.query,
+        user_id=state.user_id,
+        finish_reason=state.finish_reason,
+        total_duration_ms=total_duration_ms,
+        timings=timings,
+        retrieval=retrieval_trace,
+        graph=graph_trace,
+        context=context_trace,
+        iterations=state.iteration,
+        tool_calls=state.tool_calls,
+        total_tokens=state.total_tokens,
+    )
+
+
+def _step_duration(state: AgentState, label: str) -> float:
+    return round(sum(s.duration_ms for s in state.steps if s.step == label), 3)
+
+
 # --- node functions (shared by both runtimes) ------------------------------
 
 async def node_retrieve(state: AgentState, toolset: AgentToolSet) -> AgentState:
@@ -176,10 +273,15 @@ async def node_generate(
     if state.terminated:
         return state
     prompt = build_answer_prompt(state)
+    start = _now(state)
     try:
         raw = await provider.generate(prompt, system=ANSWER_SYSTEM_PROMPT)
     except Exception as exc:  # noqa: BLE001 — generation failure is terminal
-        state.steps.append(AgentStepResult(step="generate", ok=False, error=str(exc)))
+        state.steps.append(
+            AgentStepResult(
+                step="generate", ok=False, error=str(exc), duration_ms=_elapsed_ms(state, start)
+            )
+        )
         state.finish_reason = FINISH_ERROR
         state.terminated = True
         return state
@@ -189,7 +291,13 @@ async def node_generate(
     state.total_tokens += tokens
     state.messages.append(AgentMessage(role="assistant", content=answer))
     state.steps.append(
-        AgentStepResult(step="generate", ok=True, summary="generated answer", tokens=tokens)
+        AgentStepResult(
+            step="generate",
+            ok=True,
+            summary="generated answer",
+            tokens=tokens,
+            duration_ms=_elapsed_ms(state, start),
+        )
     )
     return state
 
@@ -283,6 +391,7 @@ def step_payload(step: AgentStepResult) -> dict:
         "summary": step.summary,
         "error": step.error,
         "tool": step.tool_call.tool_name if step.tool_call else None,
+        "duration_ms": step.duration_ms,
     }
 
 
@@ -304,6 +413,7 @@ def done_payload(state: AgentState) -> dict:
         "finish_reason": state.finish_reason,
         "iterations": state.iteration,
         "tool_calls": state.tool_calls,
+        "total_duration_ms": round(sum(s.duration_ms for s in state.steps), 3),
         "answer": state.answer,
         "citations": citations_payload(state.citations),
     }

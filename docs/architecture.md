@@ -1856,3 +1856,81 @@ validated citations.
 
 `npm run typecheck` (strict, clean) and `next build` (all routes prerender) pass.
 The backend is unchanged — Python suite remains **434 passed / 7 skipped**.
+
+---
+
+## 21. Stage 13 — Observability (Phases A/B/C)
+
+Stage 13 makes the query pipeline *explainable* and the corpus *measurable*,
+without changing any behavior. It is **backend-only and additive**: no domain
+changes, no migrations, no breaking API changes; offline-first and deterministic
+throughout. The evaluation framework, a true retrieval-frequency counter,
+persistent trace storage, and OTel/Prometheus + alerting are **deferred to Stage
+14**. The dashboard observability pages are a separate later frontend pass.
+
+```
+   /query run ──▶ AgentState (retrieval, expansion, context, per-stage timing)
+                      │  build_request_trace() — pure projection, re-runs nothing
+                      ▼
+                 RequestTrace ──▶ TraceRecorder (in_memory default | noop | LangSmith)
+                      │                              │
+            additive `trace` on /query     GET /observability/traces (in-memory)
+
+   GET /memories/health ──▶ MemoryHealthService (memories + summaries + graph counts)
+```
+
+### 21.1 Phase A — request traces + timing
+
+- **`Clock` port** (`application/interfaces/clock.py`) decouples timing from the
+  wall clock so durations are testable. Adapters: `MonotonicClock`
+  (`infrastructure/observability`, `time.monotonic`) and the deterministic
+  `FrozenClock` (`application/services/observability`, with `auto_advance` so a
+  stage that reads the clock once at start and once at end measures a fixed
+  step — exact, reproducible durations).
+- **Observability DTOs** (`application/dto/observability_dto.py`): `RequestTrace`
+  composing `RetrievalTrace`, `GraphExpansionTrace` (+`SeedExpansion`),
+  `ContextTrace`, and per-stage `StepTiming`.
+- **Instrumentation**: `agent_steps` times each stage via the injected clock
+  (`AgentStepResult.duration_ms`, `AgentTrace.total_duration_ms`) and assembles a
+  `RequestTrace` from the agent state — a **pure projection** of data the
+  pipeline already produced, so it adds nothing to the hot path and re-runs no
+  subsystem. Surfaced additively on `/query` (`trace`) and in SSE `step` frames
+  (`duration_ms`). *Known scope edge:* the graph trace reports seed→neighbor
+  admission counts + influence scores + filter outcomes, not per-edge edge-type
+  strings (`GraphAwareResult` doesn't carry them, and the query hot path takes no
+  extra graph reads).
+
+### 21.2 Phase C — memory health metrics
+
+`MemoryHealthService` (`application/services/observability`) aggregates read-only
+signals per tenant: lifecycle composition + promotion/archive rates, growth
+(created in trailing 7/30 days, with an injectable `now`), average score, a
+reinforcement **proxy** (mean frequency-score over active memories), graph
+density (new `GraphRepository.count_nodes`/`count_edges` on both the in-memory
+and Neo4j adapters), and rolling-summary coverage (PROJECT/GOAL/EXPERIENCE). It
+introduces no write path and no counters; metrics that would need event-level
+counting (retrieval/reinforcement frequency) are honestly labeled in a `notes`
+field and deferred. Exposed at `GET /api/v1/memories/health` (analytics endpoint
+untouched).
+
+### 21.3 Phase B — trace-recorder seam
+
+`TraceRecorder` port (`record` + `recent`) with three adapters in
+`infrastructure/observability`, selected by a cached factory: `NoOpTraceRecorder`
+(discard), **`InMemoryTraceRecorder` (the default** — a bounded, process-local
+ring buffer the `/observability/traces` endpoint reads back), and
+`LangSmithTraceRecorder` (optional, `LANGSMITH_ENABLED=false` by default,
+`langsmith` imported **lazily** only when a real client is constructed — no
+test/runtime dependency, mirroring the lazy LangGraph runtimes). The query use
+case records the `RequestTrace` best-effort after `respond()` (the recorder
+swallows its own errors, so observability can never break a request). Persistent
+storage is explicitly out of scope.
+
+### 21.4 Tests
+
+`+49 passing` (444 → **493**, `8 skipped`; the new skip is the LangSmith factory
+test, which `importorskip`s `langsmith`). Unit: clock semantics; agent stage
+timing + `RequestTrace` assembly (deterministic via `FrozenClock`); graph counts;
+health math; recorder adapters + factory; LangSmith recorder via an injected fake
+client. Integration: `/query` surfaces the trace; `GET /memories/health`; and
+`GET /observability/traces` records a query run and lists it. All offline.

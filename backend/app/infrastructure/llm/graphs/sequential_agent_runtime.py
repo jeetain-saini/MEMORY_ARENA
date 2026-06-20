@@ -19,6 +19,7 @@ from app.application.dto.agent_dto import (
     AgentStreamEvent,
 )
 from app.application.interfaces.agent_runtime import AgentRuntime
+from app.application.interfaces.clock import Clock
 from app.application.interfaces.llm_provider import LLMProvider
 from app.application.interfaces.token_counter import TokenCounter
 from app.application.services.agent.toolset import AgentToolSet
@@ -31,13 +32,15 @@ class SequentialAgentRuntime(AgentRuntime):
         toolset: AgentToolSet,
         provider: LLMProvider,
         token_counter: TokenCounter,
+        clock: Clock | None = None,
     ) -> None:
         self._toolset = toolset
         self._provider = provider
         self._counter = token_counter
+        self._clock = clock
 
     async def respond(self, request: AgentRequest) -> AgentResponse:
-        state = agent_steps.init_state(request)
+        state = agent_steps.init_state(request, clock=self._clock)
         try:
             await asyncio.wait_for(
                 agent_steps.execute(state, self._toolset, self._provider, self._counter),
@@ -50,7 +53,7 @@ class SequentialAgentRuntime(AgentRuntime):
         return agent_steps.to_response(state)
 
     async def stream(self, request: AgentRequest) -> AsyncIterator[AgentStreamEvent]:
-        state = agent_steps.init_state(request)
+        state = agent_steps.init_state(request, clock=self._clock)
         async for event in agent_steps.stream_with_timeout(
             state, self._toolset, self._provider, self._counter, request.config.timeout_seconds
         ):

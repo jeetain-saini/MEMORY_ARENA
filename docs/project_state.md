@@ -16,8 +16,12 @@
 > drive decay/archival/promotion/summary maintenance. Behind an `LLMProvider` port
 > and `WorkflowEngine` / `ConsolidationEngine` / `ContextCompressor` / `AgentRuntime`
 > / `Scheduler` / `SummaryGenerator` ports (offline defaults throughout).
-> **Test suite: `434 passing, 7 skipped`** (PyTest; skips are live-Neo4j + the
-> LangGraph suites, which skip when those deps/servers are unavailable). The
+> **Test suite: `493 passing, 8 skipped`** (PyTest; skips are live-Neo4j + the
+> LangGraph suites + the LangSmith factory test, which skip when those
+> deps/servers are unavailable). Stages 12 (dashboard), 12.5 (summary read API),
+> and 13 (Observability & Evaluation — Phases A/B/C: request traces + timing,
+> memory-health metrics, and an optional trace-recorder seam) are also complete;
+> the Stage 13 evaluation framework is deferred to Stage 14. The
 > companion deep-dive lives in [`docs/architecture.md`](architecture.md)
 > (sections §1–§19).
 
@@ -643,7 +647,17 @@ regress the count.
 - **Query-time agent runtime exists (Stage 10 Phase 4); no chat/multi-turn or autonomous tool loops** — single-pass orchestration with guardrails; conversational memory and tool loops are future work.
 - **Scheduler is in-process with no live ticker (Stage 11).** `InProcessScheduler` implements the `Scheduler` port and holds the decay/archival/promotion/summary jobs; it triggers them explicitly (`run_job`/`run_all`) rather than on a wall-clock loop. A production cron driver (APScheduler / Celery beat / K8s CronJob) plugs in behind the same port to fire them on schedule.
 - **Vector search is brute-force** in the repository (exact cosine over candidates) — correct but not ANN-scaled; the `list_candidates` port is the seam for a pgvector ANN index.
-- **No observability stack** — JSON logs + correlation IDs exist; no metrics/tracing/dashboards (LangSmith/OTel) yet.
+- **Observability (Stage 13, Phases A/B/C) is in place** — JSON logs +
+  correlation IDs, plus: request-scoped agent traces with monotonic per-stage
+  timing (a `Clock` port: `MonotonicClock` / deterministic `FrozenClock`), an
+  additive `trace` block on `/query`; memory-health metrics (`GET
+  /memories/health`: growth, promotion/archive rates, graph density via new
+  `GraphRepository.count_nodes`/`count_edges`, summary coverage); and a
+  `TraceRecorder` seam (`NoOpTraceRecorder` / default `InMemoryTraceRecorder` /
+  optional lazy `LangSmithTraceRecorder`, `LANGSMITH_ENABLED=false`) with `GET
+  /observability/traces`. **Not yet:** the evaluation framework, a true
+  retrieval-frequency counter, persistent trace storage, and OTel/Prometheus +
+  alerting — all deferred to Stage 14.
 - **No authn/authz enforcement** — `user_id` is passed in; JWT settings exist but no auth middleware.
 - **Frontend dashboard built (Stage 12).** Next.js 15 + React 19 + TanStack Query + shadcn/ui + React Flow; six pages (Dashboard, Memory/Graph Explorer, Context/Agent Playground, Summary Explorer) consuming the existing API. Frontend-only. No auth: `user_id` is a manual/env-default field persisted in localStorage.
 - **Summary read API added (Stage 12.5).** Thin presentation adapters expose the existing summaries: `GET /api/v1/summaries/{user_id}` (optional `?scope=` filter) and `GET /api/v1/summaries/{user_id}/{scope}` (404 if absent), via two read passthroughs on `MemorySummaryService`. No new business logic; the dashboard Summary Explorer now works with zero frontend changes.

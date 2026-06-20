@@ -9,6 +9,7 @@ behave identically regardless of which is wired in.
 from __future__ import annotations
 
 from collections import deque
+from uuid import UUID
 
 from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath
 from app.application.interfaces.graph_repository import GraphRepository
@@ -110,6 +111,28 @@ class InMemoryGraphRepository(GraphRepository):
         if source_id in self._nodes:
             dfs(source_id, [source_id], [])
         return paths
+
+    # --- counts -----------------------------------------------------------
+    async def count_nodes(self, user_id: UUID | None = None) -> int:
+        return len(self._user_node_ids(user_id))
+
+    async def count_edges(self, user_id: UUID | None = None) -> int:
+        if user_id is None:
+            return len(self._edges)
+        ids = self._user_node_ids(user_id)
+        return sum(
+            1 for e in self._edges.values() if e.source_id in ids and e.target_id in ids
+        )
+
+    def _user_node_ids(self, user_id: UUID | None) -> set[str]:
+        if user_id is None:
+            return set(self._nodes)
+        target = str(user_id)
+        return {
+            nid
+            for nid, node in self._nodes.items()
+            if str(node.properties.get("user_id", "")) == target
+        }
 
     # --- helpers ----------------------------------------------------------
     def _adjacent(self, node_id: str, allowed: set[str] | None) -> list[GraphEdge]:

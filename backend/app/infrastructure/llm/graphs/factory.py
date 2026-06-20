@@ -28,6 +28,7 @@ from app.infrastructure.llm.providers.factory import build_llm_provider
 
 if TYPE_CHECKING:
     from app.application.interfaces.agent_runtime import AgentRuntime
+    from app.application.interfaces.clock import Clock
     from app.application.interfaces.llm_provider import LLMProvider
     from app.application.interfaces.token_counter import TokenCounter
     from app.application.services.agent.toolset import AgentToolSet
@@ -59,18 +60,20 @@ def build_agent_runtime(
     toolset: AgentToolSet,
     provider: LLMProvider,
     counter: TokenCounter,
+    clock: Clock | None = None,
 ) -> AgentRuntime:
     """Select the query-time agent runtime by ``AGENT_RUNTIME``.
 
     Not cached: the toolset is assembled per request from the (singleton-backed)
     services. ``sequential`` is the offline default; ``langgraph`` lazily imports
-    the package and is exercised by the skip-guarded agent suite.
+    the package and is exercised by the skip-guarded agent suite. ``clock`` is the
+    monotonic time source for stage-duration observability (Stage 13).
     """
     settings = get_settings()
     if settings.agent_runtime.lower() == "langgraph":
         from app.infrastructure.llm.graphs.agent_graph import LangGraphAgentRuntime
 
-        return LangGraphAgentRuntime(toolset, provider, counter)
+        return LangGraphAgentRuntime(toolset, provider, counter, clock)
     from app.infrastructure.llm.graphs.sequential_agent_runtime import SequentialAgentRuntime
 
-    return SequentialAgentRuntime(toolset, provider, counter)
+    return SequentialAgentRuntime(toolset, provider, counter, clock)

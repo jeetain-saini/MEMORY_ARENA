@@ -8,6 +8,7 @@ All methods are async (real backends do I/O).
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from uuid import UUID
 
 from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath
 
@@ -55,3 +56,12 @@ class GraphRepository(ABC):
     async def find_paths(
         self, source_id: str, target_id: str, *, max_depth: int = 4
     ) -> list[GraphPath]: ...
+
+    # --- counts (Stage 13 observability: graph density) -------------------
+    @abstractmethod
+    async def count_nodes(self, user_id: UUID | None = None) -> int:
+        """Count nodes, optionally scoped to one tenant's ``user_id`` property."""
+
+    @abstractmethod
+    async def count_edges(self, user_id: UUID | None = None) -> int:
+        """Count edges whose endpoints belong to ``user_id`` (or all if None)."""

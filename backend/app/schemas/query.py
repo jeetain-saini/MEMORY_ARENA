@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.application.dto.agent_dto import AgentConfig, AgentRequest, AgentResponse
 from app.domain.value_objects.memory_type import MemoryType
+from app.schemas.observability import RequestTraceSchema
 
 
 class QueryRequestSchema(BaseModel):
@@ -36,6 +37,7 @@ class QueryResponseSchema(BaseModel):
     answer: str
     citations: list[CitationSchema]
     finish_reason: str
+    trace: RequestTraceSchema | None = None
 
     @classmethod
     def from_dto(cls, dto: AgentResponse) -> "QueryResponseSchema":
@@ -52,4 +54,9 @@ class QueryResponseSchema(BaseModel):
                 for c in dto.citations
             ],
             finish_reason=dto.finish_reason,
+            trace=(
+                RequestTraceSchema.from_dto(dto.request_trace)
+                if dto.request_trace is not None
+                else None
+            ),
         )

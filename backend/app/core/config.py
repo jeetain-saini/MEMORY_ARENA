@@ -106,6 +106,18 @@ class Settings(BaseSettings):
     agent_max_tokens: int = 2000
     agent_answer_max_tokens: int = 512
 
+    # --- Observability (Stage 13) -----------------------------------------
+    # Trace recorder for query-time request traces: "in_memory" (default;
+    # bounded ring buffer, readable via GET /observability/traces) or "noop".
+    # When LANGSMITH_ENABLED is true, the LangSmith exporter takes precedence.
+    trace_recorder: str = "in_memory"
+    trace_recorder_capacity: int = 200
+    # LangSmith export is optional and OFF by default; the langsmith package is
+    # imported lazily only when this is enabled (no test/runtime dependency).
+    langsmith_enabled: bool = False
+    langsmith_api_key: str | None = None
+    langsmith_project: str = "memoryarena"
+
     # --- Maintenance workflows (Stage 11) ---------------------------------
     # When enabled, the lifespan registers the inference handler and the
     # scheduled sweeps/summary jobs. The in-process scheduler runs no live

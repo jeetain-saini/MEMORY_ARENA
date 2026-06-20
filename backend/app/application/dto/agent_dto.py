@@ -18,7 +18,9 @@ from uuid import UUID
 
 from app.application.dto.context_dto import ContextPackage
 from app.application.dto.graph_dto import GraphAwareResult
+from app.application.dto.observability_dto import RequestTrace
 from app.application.dto.retrieval_dto import RetrievalResult, RetrievedMemory
+from app.application.interfaces.clock import Clock
 from app.domain.value_objects.memory_type import MemoryType
 
 
@@ -73,6 +75,7 @@ class AgentStepResult:
     tool_call: AgentToolCall | None = None
     tokens: int = 0
     error: str | None = None
+    duration_ms: float = 0.0   # monotonic stage duration (Stage 13 observability)
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,7 @@ class AgentTrace:
     tool_calls: int = 0
     total_tokens: int = 0
     finish_reason: str = FINISH_COMPLETED
+    total_duration_ms: float = 0.0   # sum of stage durations (Stage 13 observability)
 
 
 @dataclass(frozen=True)
@@ -101,6 +105,8 @@ class AgentResponse:
     citations: list[AgentCitation]
     trace: AgentTrace
     finish_reason: str = FINISH_COMPLETED
+    # Stage 13: the request-scoped observability trace (None if not assembled).
+    request_trace: RequestTrace | None = None
 
 
 @dataclass(frozen=True)
@@ -124,6 +130,10 @@ class AgentState:
     query: str
     config: AgentConfig
     metadata: dict[str, Any] = field(default_factory=dict)
+
+    # Stage 13: injected monotonic clock for deterministic stage timing. Set by
+    # the runtime via ``init_state``; when None, timing is skipped (durations 0).
+    clock: Clock | None = None
 
     # stage outputs
     retrieved: RetrievalResult | None = None

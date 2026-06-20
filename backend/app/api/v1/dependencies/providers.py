@@ -16,11 +16,13 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.agent_runtime import AgentRuntime
+from app.application.interfaces.clock import Clock
 from app.application.interfaces.context_compressor import ContextCompressor
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.reranker import Reranker
+from app.application.interfaces.trace_recorder import TraceRecorder
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.interfaces.consolidation_job_processor import ConsolidationJobProcessor
 from app.application.interfaces.workflow_job_processor import WorkflowJobProcessor
@@ -52,6 +54,7 @@ from app.application.services.decay_strategies import DecayStrategy, Exponential
 from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
+from app.application.services.observability.memory_health_service import MemoryHealthService
 from app.application.services.memory_service import MemoryService
 from app.application.use_cases.query_memory_use_cases import QueryMemoryUseCase
 from app.application.use_cases.query_memory_use_cases_impl import QueryMemoryUseCaseImpl
@@ -66,6 +69,8 @@ from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.neo4j import neo4j_manager
 from app.infrastructure.llm.graphs.factory import build_agent_runtime
 from app.infrastructure.llm.providers.factory import build_llm_provider
+from app.infrastructure.observability.factory import build_trace_recorder
+from app.infrastructure.observability.monotonic_clock import MonotonicClock
 from app.infrastructure.summaries.deterministic_summary_generator import (
     DeterministicSummaryGenerator,
 )
@@ -194,6 +199,14 @@ def get_graph_traversal_service(
     return GraphTraversalService(repository, config)
 
 
+def get_memory_health_service(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    graph_repository: GraphRepository = Depends(get_graph_repository),
+) -> MemoryHealthService:
+    """Assemble the memory-health metrics service for a request (Stage 13)."""
+    return MemoryHealthService(uow, graph_repository)
+
+
 def get_graph_aware_retrieval_service(
     retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
     repository: GraphRepository = Depends(get_graph_repository),
@@ -260,10 +273,16 @@ def get_agent_config(settings: Settings = Depends(get_app_settings)) -> AgentCon
     )
 
 
+def get_clock() -> Clock:
+    """Provide the monotonic clock for stage-duration observability (Stage 13)."""
+    return MonotonicClock()
+
+
 def get_agent_runtime(
     retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
     graph_aware: GraphAwareRetrievalService = Depends(get_graph_aware_retrieval_service),
     context_builder: ContextBuilderService = Depends(get_context_builder_service),
+    clock: Clock = Depends(get_clock),
 ) -> AgentRuntime:
     """Assemble the query-time agent runtime for a request.
 
@@ -276,14 +295,24 @@ def get_agent_runtime(
         GraphExpansionTool(graph_aware),
         ContextBuilderTool(context_builder),
     )
-    return build_agent_runtime(toolset, build_llm_provider(), HeuristicTokenCounter())
+    return build_agent_runtime(toolset, build_llm_provider(), HeuristicTokenCounter(), clock)
+
+
+def get_trace_recorder() -> TraceRecorder:
+    """Provide the configured trace recorder (process-wide singleton, Stage 13).
+
+    Defaults to the in-memory ring buffer; ``TRACE_RECORDER=noop`` disables it and
+    ``LANGSMITH_ENABLED=true`` selects the (lazy) LangSmith exporter.
+    """
+    return build_trace_recorder()
 
 
 def get_query_use_case(
     runtime: AgentRuntime = Depends(get_agent_runtime),
+    recorder: TraceRecorder = Depends(get_trace_recorder),
 ) -> QueryMemoryUseCase:
     """Assemble the query use case for a request."""
-    return QueryMemoryUseCaseImpl(runtime)
+    return QueryMemoryUseCaseImpl(runtime, recorder)
 
 
 def get_summary_service() -> MemorySummaryService:
@@ -309,6 +338,7 @@ EventDispatcherDep = Depends(get_event_dispatcher)
 MemoryServiceDep = Depends(get_memory_service)
 MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
 MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
+MemoryHealthServiceDep = Depends(get_memory_health_service)
 EmbeddingProviderDep = Depends(get_embedding_provider)
 MemoryRetrievalServiceDep = Depends(get_memory_retrieval_service)
 ContextBuilderServiceDep = Depends(get_context_builder_service)
@@ -320,3 +350,4 @@ AgentConfigDep = Depends(get_agent_config)
 AgentRuntimeDep = Depends(get_agent_runtime)
 QueryUseCaseDep = Depends(get_query_use_case)
 SummaryServiceDep = Depends(get_summary_service)
+TraceRecorderDep = Depends(get_trace_recorder)

@@ -11,6 +11,8 @@ their (validated) values into the relationship type of the Cypher statement.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath, NodeType
 from app.application.interfaces.graph_repository import GraphRepository
 from app.infrastructure.graph.neo4j import Neo4jManager
@@ -150,6 +152,26 @@ class Neo4jGraphRepository(GraphRepository):
             ]
             paths.append(GraphPath(nodes=nodes, edges=edges))
         return paths
+
+    # --- counts (Stage 13 observability: graph density) -------------------
+    async def count_nodes(self, user_id: UUID | None = None) -> int:
+        uid = str(user_id) if user_id is not None else None
+        records = await self._run(
+            "MATCH (n:MemoryNode) WHERE $uid IS NULL OR n.user_id = $uid "
+            "RETURN count(n) AS c",
+            uid=uid,
+        )
+        return int(records[0]["c"]) if records else 0
+
+    async def count_edges(self, user_id: UUID | None = None) -> int:
+        uid = str(user_id) if user_id is not None else None
+        records = await self._run(
+            "MATCH (a:MemoryNode)-[r]->(b:MemoryNode) "
+            "WHERE $uid IS NULL OR (a.user_id = $uid AND b.user_id = $uid) "
+            "RETURN count(r) AS c",
+            uid=uid,
+        )
+        return int(records[0]["c"]) if records else 0
 
     # --- mapping helpers --------------------------------------------------
     @staticmethod

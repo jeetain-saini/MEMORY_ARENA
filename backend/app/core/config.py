@@ -11,8 +11,12 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, ValidationInfo, field_validator
+from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Allowed values for the Stage 14 backend-selection flags.
+_CACHE_BACKENDS = {"noop", "memory", "redis"}
+_VECTOR_SEARCH_MODES = {"scan", "hnsw", "auto"}
 
 Environment = Literal["development", "staging", "production"]
 
@@ -117,6 +121,9 @@ class Settings(BaseSettings):
     langsmith_enabled: bool = False
     langsmith_api_key: str | None = None
     langsmith_project: str = "memoryarena"
+    # Performance metrics sink (Stage 14 Phase 5): "noop" (default) or "memory"
+    # (in-process counters + latency aggregates, read via /observability/metrics).
+    metrics_sink: str = "noop"
 
     # --- Maintenance workflows (Stage 11) ---------------------------------
     # When enabled, the lifespan registers the inference handler and the
@@ -136,9 +143,42 @@ class Settings(BaseSettings):
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
+    # Rotating refresh-token lifetime (Stage 14 Phase 2).
+    refresh_token_expire_days: int = 14
 
     # --- CORS --------------------------------------------------------------
     cors_allowed_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # Whether to send Access-Control-Allow-Credentials. Wildcard origins are
+    # unsafe when this is true (a browser will not honor it, and it signals a
+    # misconfiguration), so production rejects that combination.
+    cors_allow_credentials: bool = True
+
+    # --- Stage 14 hardening flags -----------------------------------------
+    # All default to today's behavior so existing clients/tests are unaffected;
+    # production adapters are selected (in later phases) by these flags.
+    # Authentication enforcement (Phase 2/3). When false, user_id continues to be
+    # taken from the request as before (backward compatible).
+    auth_enabled: bool = False
+    # API rate limiting (Phase 4). When false, the no-op limiter is used.
+    rate_limit_enabled: bool = False
+    # Fixed-window rate-limit policy (per-identity, per-tier; requests/window).
+    rate_limit_window_seconds: int = 60
+    rate_limit_default_auth: int = 120          # authenticated, default tier
+    rate_limit_default_anon: int = 30           # anonymous (per-IP), default tier
+    rate_limit_auth_endpoints_anon: int = 5     # /auth/* per-IP (brute-force defense)
+    rate_limit_query_auth: int = 20             # /query (LLM cost)
+    rate_limit_query_anon: int = 5
+    rate_limit_ingest_auth: int = 30            # /ingest (writes)
+    # Honor X-Forwarded-For (first hop) for the client IP behind a trusted proxy.
+    rate_limit_trust_forwarded_for: bool = False
+    # Cache backend for analytics/health (Phase 5): "noop" (default) | "memory" | "redis".
+    cache_backend: str = "noop"
+    # TTL safety-net for cached read aggregates (bounds staleness if an
+    # invalidation signal is ever missed). Event-driven invalidation is primary.
+    cache_ttl_seconds: int = 60
+    # Vector search mode (Phase 6): "scan" (default; brute-force, all dialects),
+    # "hnsw" (pgvector ANN pushdown), or "auto" (ANN on PostgreSQL, scan elsewhere).
+    vector_search_mode: str = "scan"
 
     # --- Derived helpers ---------------------------------------------------
     @property
@@ -173,6 +213,43 @@ class Settings(BaseSettings):
         if isinstance(value, str):
             return [origin.strip() for origin in value.split(",") if origin.strip()]
         return value
+
+    @field_validator("cache_backend")
+    @classmethod
+    def _validate_cache_backend(cls, value: str) -> str:
+        backend = value.lower()
+        if backend not in _CACHE_BACKENDS:
+            raise ValueError(f"cache_backend must be one of {sorted(_CACHE_BACKENDS)}")
+        return backend
+
+    @field_validator("vector_search_mode")
+    @classmethod
+    def _validate_vector_search_mode(cls, value: str) -> str:
+        mode = value.lower()
+        if mode not in _VECTOR_SEARCH_MODES:
+            raise ValueError(f"vector_search_mode must be one of {sorted(_VECTOR_SEARCH_MODES)}")
+        return mode
+
+    @model_validator(mode="after")
+    def _validate_production_profile(self) -> "Settings":
+        """Fail fast on unsafe production configuration.
+
+        Only enforced when ``app_env == 'production'`` so dev/test (the defaults)
+        are unaffected. Deliberately minimal and backward compatible:
+        ``AUTH_ENABLED=false`` and the existing JWT-secret rules are still allowed
+        in production. The ``cache_backend`` / ``vector_search_mode`` values are
+        validated for all environments by the field validators above.
+        """
+        if not self.is_production:
+            return self
+        if self.app_debug:
+            raise ValueError("APP_DEBUG must be False in production")
+        if self.cors_allow_credentials and "*" in self.cors_allowed_origins:
+            raise ValueError(
+                "Wildcard CORS origin '*' is not allowed in production when "
+                "cors_allow_credentials is true"
+            )
+        return self
 
 
 @lru_cache(maxsize=1)

@@ -27,6 +27,7 @@ from app.application.services.consolidation.consolidation_event_handler import (
 from app.application.services.consolidation.persistent_consolidation_service import (
     PersistentConsolidationService,
 )
+from app.application.services.cache.cache_invalidation_handler import CacheInvalidationEventHandler
 from app.application.services.embedding_event_handler import EmbeddingEventHandler
 from app.application.services.embedding_service import EmbeddingService
 from app.application.services.graph.config import GraphConfig
@@ -51,6 +52,7 @@ from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryU
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
+from app.infrastructure.cache.factory import build_cache_provider
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
@@ -95,6 +97,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     embedding_processor = InProcessEmbeddingJobProcessor(embedding_service.process)
     EmbeddingEventHandler(embedding_processor).register(in_process_dispatcher)
     app.state.embedding_processor = embedding_processor
+
+    # --- Wire cache invalidation (Stage 14 Phase 5) ----------------------
+    # A memory mutation clears the writer's cached analytics/health aggregates
+    # (and the global ones). No-op when CACHE_BACKEND=noop. Shares the singleton
+    # cache provider with the request services.
+    CacheInvalidationEventHandler(build_cache_provider()).register(in_process_dispatcher)
 
     # --- Wire the event-driven knowledge-graph sync ----------------------
     # Sync runs off the request path via a background job processor (mirrors
@@ -231,7 +239,7 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
-        allow_credentials=True,
+        allow_credentials=settings.cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )

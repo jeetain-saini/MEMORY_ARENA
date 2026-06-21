@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 import time
 import uuid
 from contextvars import ContextVar
+from datetime import datetime, timezone
 from typing import Any
 
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -27,6 +29,45 @@ from starlette.responses import Response
 _request_id_ctx: ContextVar[str] = ContextVar("request_id", default="-")
 
 REQUEST_ID_HEADER = "X-Request-ID"
+
+# --- Log redaction ---------------------------------------------------------
+# Sensitive substrings: any structured field whose key contains one of these
+# (case-insensitive) has its value replaced before the line is emitted, so
+# secrets/credentials never reach the log aggregator. Idempotent — re-redacting
+# an already-redacted value leaves it unchanged.
+_REDACTED = "***REDACTED***"
+_SENSITIVE_KEYS: frozenset[str] = frozenset(
+    {
+        "password", "passwd", "secret", "client_secret", "token", "access_token",
+        "refresh_token", "authorization", "api_key", "apikey", "x-api-key",
+        "private_key", "jwt", "bearer", "cookie", "set-cookie", "session", "session_id",
+    }
+)
+# Scrub a bearer token embedded in a free-text message; idempotent because the
+# redaction placeholder contains no whitespace, so re-matching replaces it with
+# itself.
+_BEARER_RE = re.compile(r"(?i)(bearer\s+)\S+")
+
+
+def _is_sensitive_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(token in lowered for token in _SENSITIVE_KEYS)
+
+
+def _redact(value: Any) -> Any:
+    """Recursively redact sensitive entries in dicts/lists; pass others through."""
+    if isinstance(value, dict):
+        return {
+            key: (_REDACTED if _is_sensitive_key(str(key)) else _redact(val))
+            for key, val in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact(item) for item in value]
+    return value
+
+
+def _redact_message(message: str) -> str:
+    return _BEARER_RE.sub(rf"\g<1>{_REDACTED}", message)
 
 # Standard LogRecord attributes we do NOT want to duplicate into the JSON "extra".
 _RESERVED_ATTRS = {
@@ -49,21 +90,31 @@ def set_request_id(request_id: str) -> None:
 class JsonFormatter(logging.Formatter):
     """Render a LogRecord as a one-line JSON document."""
 
+    @staticmethod
+    def _timestamp(created: float) -> str:
+        # millisecond-precision UTC ISO-8601. (``time.strftime`` does not support
+        # ``%f`` portably, so build the timestamp via ``datetime``.)
+        dt = datetime.fromtimestamp(created, tz=timezone.utc)
+        return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+
     def format(self, record: logging.LogRecord) -> str:
         payload: dict[str, Any] = {
-            "timestamp": self.formatTime(record, "%Y-%m-%dT%H:%M:%S.%fZ"),
+            "timestamp": self._timestamp(record.created),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": _redact_message(record.getMessage()),
             "request_id": get_request_id(),
         }
         if record.exc_info:
             payload["exception"] = self.formatException(record.exc_info)
 
-        # Merge structured `extra={...}` fields the caller attached.
+        # Merge structured `extra={...}` fields the caller attached, redacting any
+        # sensitive keys (and recursing into nested dict/list values).
         for key, value in record.__dict__.items():
             if key not in _RESERVED_ATTRS and not key.startswith("_"):
-                payload.setdefault(key, value)
+                payload.setdefault(
+                    key, _REDACTED if _is_sensitive_key(key) else _redact(value)
+                )
 
         return json.dumps(payload, default=str, ensure_ascii=False)
 

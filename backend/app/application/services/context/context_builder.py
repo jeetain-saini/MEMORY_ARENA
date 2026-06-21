@@ -21,8 +21,10 @@ from app.application.dto.context_dto import (
     ContextRequest,
     DroppedMemory,
 )
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.retrieval_dto import MemorySearchQuery, RetrievedMemory
 from app.application.interfaces.context_compressor import ContextCompressor
+from app.application.services.authorization import resolve_scope
 from app.application.services.context.conflict_detector import ConflictDetector
 from app.application.services.context.consolidation_service import MemoryConsolidationService
 from app.application.services.context.selection_service import MemorySelectionService
@@ -47,12 +49,14 @@ class ContextBuilderService:
         consolidation_service: MemoryConsolidationService,
         conflict_detector: ConflictDetector,
         compressor: ContextCompressor,
+        principal: AuthPrincipal | None = None,
     ) -> None:
         self._retrieval = retrieval_service
         self._selection = selection_service
         self._consolidation = consolidation_service
         self._conflicts = conflict_detector
         self._compressor = compressor
+        self._principal = principal
 
     async def build(
         self,
@@ -84,6 +88,7 @@ class ContextBuilderService:
         *,
         retrieved: list[RetrievedMemory] | None = None,
     ) -> _Assembly:
+        resolve_scope(self._principal, request.user_id)
         # When a caller supplies pre-retrieved memories (e.g. the agent runtime,
         # which already ran hybrid retrieval + graph expansion), reuse them
         # instead of retrieving again. Otherwise retrieve internally as before.

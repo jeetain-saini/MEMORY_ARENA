@@ -59,10 +59,14 @@ async def query_stream(
     config: AgentConfig = AgentConfigDep,
 ) -> StreamingResponse:
     request = payload.to_request(config)
+    # Resolve the stream (and its synchronous authorization scope check) before
+    # returning the streaming response, so an unauthorized request yields a clean
+    # 403 status rather than an in-band SSE error frame.
+    events = use_case.stream(request)
 
     async def event_source() -> AsyncIterator[str]:
         try:
-            async for event in use_case.stream(request):
+            async for event in events:
                 yield _sse_frame(event)
         except Exception as exc:  # noqa: BLE001 — propagate as a final error frame
             yield _sse_frame(AgentStreamEvent(event="error", data={"message": str(exc)}))

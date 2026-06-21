@@ -19,15 +19,24 @@ from app.application.interfaces.clock import Clock
 
 
 class FrozenClock(Clock):
-    def __init__(self, *, start: float = 0.0, auto_advance: float = 0.0) -> None:
+    def __init__(
+        self, *, start: float = 0.0, auto_advance: float = 0.0, epoch: float = 0.0
+    ) -> None:
         self._t = float(start)
         self._auto_advance = float(auto_advance)
+        # Wall-clock value, controlled independently of the monotonic ``now()``
+        # so token-expiry tests can advance time deterministically.
+        self._epoch = float(epoch)
 
     def now(self) -> float:
         current = self._t
         self._t += self._auto_advance
         return current
 
+    def now_epoch(self) -> float:
+        return self._epoch
+
     def advance(self, seconds: float) -> None:
-        """Move the clock forward by ``seconds`` (manual control)."""
+        """Move both the monotonic and wall clocks forward by ``seconds``."""
         self._t += float(seconds)
+        self._epoch += float(seconds)

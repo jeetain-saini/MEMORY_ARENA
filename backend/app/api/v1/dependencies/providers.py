@@ -11,13 +11,21 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from fastapi import Depends, Request
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from neo4j import AsyncDriver
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.interfaces.agent_runtime import AgentRuntime
+from app.application.interfaces.cache_provider import CacheProvider
 from app.application.interfaces.clock import Clock
 from app.application.interfaces.context_compressor import ContextCompressor
+from app.application.interfaces.metrics_sink import MetricsSink
+from app.application.interfaces.password_hasher import PasswordHasher
+from app.application.interfaces.principal_provider import PrincipalProvider
+from app.application.interfaces.refresh_token_store import RefreshTokenStore
+from app.application.interfaces.token_service import TokenService
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.interfaces.embedding_provider import EmbeddingProvider
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
@@ -55,10 +63,18 @@ from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.services.observability.memory_health_service import MemoryHealthService
+from app.application.services.auth.auth_service import AuthService
 from app.application.services.memory_service import MemoryService
 from app.application.use_cases.query_memory_use_cases import QueryMemoryUseCase
 from app.application.use_cases.query_memory_use_cases_impl import QueryMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
+from app.core.exceptions import AppException
+from app.infrastructure.auth.factory import (
+    build_password_hasher,
+    build_refresh_token_store,
+    build_token_service,
+)
+from app.infrastructure.cache.factory import build_cache_provider
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
@@ -70,7 +86,10 @@ from app.infrastructure.graph.neo4j import neo4j_manager
 from app.infrastructure.llm.graphs.factory import build_agent_runtime
 from app.infrastructure.llm.providers.factory import build_llm_provider
 from app.infrastructure.observability.factory import build_trace_recorder
+from app.infrastructure.observability.metrics_factory import build_metrics_sink
 from app.infrastructure.observability.monotonic_clock import MonotonicClock
+from app.infrastructure.vector.factory import build_vector_index
+from app.infrastructure.security.jwt_principal_provider import JwtPrincipalProvider
 from app.infrastructure.summaries.deterministic_summary_generator import (
     DeterministicSummaryGenerator,
 )
@@ -116,12 +135,66 @@ def get_embedding_provider() -> EmbeddingProvider:
     return build_embedding_provider()
 
 
+def get_metrics_sink() -> MetricsSink:
+    """Provide the configured metrics sink (process-wide singleton, Stage 14)."""
+    return build_metrics_sink()
+
+
+def get_cache_provider() -> CacheProvider:
+    """Provide the configured cache provider (process-wide singleton, Stage 14).
+
+    Defaults to NoOp (cache-aside becomes a pass-through). Shared with the
+    invalidation event handler so the in-memory backend invalidates the same store.
+    """
+    return build_cache_provider()
+
+
+# --- Clock + authenticated principal (Stage 13/14) --------------------------
+# Defined early so the resource-service providers below can depend on the
+# current principal.
+_bearer_scheme = HTTPBearer(auto_error=False)
+
+
+def get_clock() -> Clock:
+    """Provide the monotonic+wall clock (stage timing + token expiry)."""
+    return MonotonicClock()
+
+
+def get_principal_provider(clock: Clock = Depends(get_clock)) -> PrincipalProvider:
+    """Provide the PrincipalProvider (JWT-backed adapter behind the port).
+
+    Composition only: the JWT/decoding specifics live in the adapter, so the rest
+    of the composition root and the services depend on the port abstraction.
+    """
+    def uow_factory() -> UnitOfWork:
+        return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+    return JwtPrincipalProvider(build_token_service(clock), uow_factory)
+
+
+async def get_current_principal(
+    settings: Settings = Depends(get_app_settings),
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
+    provider: PrincipalProvider = Depends(get_principal_provider),
+) -> AuthPrincipal | None:
+    """Resolve the request's principal, or None when auth is disabled.
+
+    The AUTH_ENABLED feature gate lives here; token decoding / user loading /
+    active-user verification are delegated to the PrincipalProvider port.
+    """
+    if not settings.auth_enabled:
+        return None
+    token = credentials.credentials if credentials is not None else None
+    return await provider.get_principal(token)
+
+
 def get_memory_service(
     uow: UnitOfWork = Depends(get_unit_of_work),
     dispatcher: EventDispatcher = Depends(get_event_dispatcher),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> MemoryService:
     """Assemble the MemoryService for a request from its dependencies."""
-    return MemoryService(uow, dispatcher)
+    return MemoryService(uow, dispatcher, principal)
 
 
 def get_intelligence_config() -> IntelligenceConfig:
@@ -139,16 +212,23 @@ def get_memory_intelligence_service(
     dispatcher: EventDispatcher = Depends(get_event_dispatcher),
     config: IntelligenceConfig = Depends(get_intelligence_config),
     decay_strategy: DecayStrategy = Depends(get_decay_strategy),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> MemoryIntelligenceService:
     """Assemble the Memory Intelligence Engine for a request."""
-    return MemoryIntelligenceService(uow, dispatcher, config, decay_strategy)
+    return MemoryIntelligenceService(uow, dispatcher, config, decay_strategy, principal)
 
 
 def get_memory_analytics_service(
     uow: UnitOfWork = Depends(get_unit_of_work),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+    cache: CacheProvider = Depends(get_cache_provider),
+    metrics: MetricsSink = Depends(get_metrics_sink),
+    settings: Settings = Depends(get_app_settings),
 ) -> MemoryAnalyticsService:
-    """Assemble the analytics service for a request."""
-    return MemoryAnalyticsService(uow)
+    """Assemble the analytics service for a request (cache-aside + metrics)."""
+    return MemoryAnalyticsService(
+        uow, principal, cache, metrics, cache_ttl_seconds=settings.cache_ttl_seconds
+    )
 
 
 def get_retrieval_config() -> RetrievalConfig:
@@ -167,19 +247,25 @@ def get_memory_retrieval_service(
     provider: EmbeddingProvider = Depends(get_embedding_provider),
     config: RetrievalConfig = Depends(get_retrieval_config),
     reranker: Reranker = Depends(get_reranker),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+    metrics: MetricsSink = Depends(get_metrics_sink),
+    clock: Clock = Depends(get_clock),
 ) -> MemoryRetrievalService:
     """Assemble the hybrid retrieval pipeline for a request.
 
     Retrievers receive a Unit-of-Work *factory* (not a shared instance) so the
-    vector and keyword stages can run concurrently, each on its own session.
+    vector and keyword stages can run concurrently, each on its own session. The
+    vector index is selected by ``VECTOR_SEARCH_MODE`` (scan default).
     """
     def uow_factory() -> UnitOfWork:
         return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
 
-    vector = VectorRetriever(uow_factory, provider)
+    vector = VectorRetriever(
+        uow_factory, provider, index=build_vector_index(uow_factory), metrics=metrics, clock=clock
+    )
     keyword = KeywordRetriever(uow_factory, config)
     hybrid = HybridRetriever(vector, keyword, config)
-    return MemoryRetrievalService(hybrid, reranker)
+    return MemoryRetrievalService(hybrid, reranker, principal, metrics, clock)
 
 
 def get_graph_config() -> GraphConfig:
@@ -195,24 +281,32 @@ def get_graph_repository() -> GraphRepository:
 def get_graph_traversal_service(
     repository: GraphRepository = Depends(get_graph_repository),
     config: GraphConfig = Depends(get_graph_config),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> GraphTraversalService:
-    return GraphTraversalService(repository, config)
+    return GraphTraversalService(repository, config, principal)
 
 
 def get_memory_health_service(
     uow: UnitOfWork = Depends(get_unit_of_work),
     graph_repository: GraphRepository = Depends(get_graph_repository),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+    cache: CacheProvider = Depends(get_cache_provider),
+    metrics: MetricsSink = Depends(get_metrics_sink),
+    settings: Settings = Depends(get_app_settings),
 ) -> MemoryHealthService:
-    """Assemble the memory-health metrics service for a request (Stage 13)."""
-    return MemoryHealthService(uow, graph_repository)
+    """Assemble the memory-health metrics service for a request (cache-aside + metrics)."""
+    return MemoryHealthService(
+        uow, graph_repository, principal, cache, metrics, cache_ttl_seconds=settings.cache_ttl_seconds
+    )
 
 
 def get_graph_aware_retrieval_service(
     retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
     repository: GraphRepository = Depends(get_graph_repository),
     config: GraphConfig = Depends(get_graph_config),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> GraphAwareRetrievalService:
-    return GraphAwareRetrievalService(retrieval_service, repository, config)
+    return GraphAwareRetrievalService(retrieval_service, repository, config, principal)
 
 
 def get_workflow_processor(request: Request) -> WorkflowJobProcessor:
@@ -248,6 +342,7 @@ def get_context_builder_service(
     retrieval_service: MemoryRetrievalService = Depends(get_memory_retrieval_service),
     config: ContextConfig = Depends(get_context_config),
     compressor: ContextCompressor = Depends(get_context_compressor),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> ContextBuilderService:
     """Assemble the Context Assembly pipeline for a request."""
     token_counter = HeuristicTokenCounter()
@@ -257,6 +352,7 @@ def get_context_builder_service(
         consolidation_service=MemoryConsolidationService(config.dedup_threshold),
         conflict_detector=ConflictDetector(config.conflict_threshold),
         compressor=compressor,
+        principal=principal,
     )
 
 
@@ -271,11 +367,6 @@ def get_agent_config(settings: Settings = Depends(get_app_settings)) -> AgentCon
         timeout_seconds=settings.agent_timeout_seconds,
         top_k=settings.agent_top_k,
     )
-
-
-def get_clock() -> Clock:
-    """Provide the monotonic clock for stage-duration observability (Stage 13)."""
-    return MonotonicClock()
 
 
 def get_agent_runtime(
@@ -310,12 +401,15 @@ def get_trace_recorder() -> TraceRecorder:
 def get_query_use_case(
     runtime: AgentRuntime = Depends(get_agent_runtime),
     recorder: TraceRecorder = Depends(get_trace_recorder),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
 ) -> QueryMemoryUseCase:
     """Assemble the query use case for a request."""
-    return QueryMemoryUseCaseImpl(runtime, recorder)
+    return QueryMemoryUseCaseImpl(runtime, recorder, principal)
 
 
-def get_summary_service() -> MemorySummaryService:
+def get_summary_service(
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+) -> MemorySummaryService:
     """Assemble the summary service for a request (read endpoints).
 
     Mirrors ``get_memory_service``: reads go through the service, which delegates
@@ -325,7 +419,54 @@ def get_summary_service() -> MemorySummaryService:
     def uow_factory() -> UnitOfWork:
         return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
 
-    return MemorySummaryService(uow_factory, DeterministicSummaryGenerator(), MaintenanceConfig())
+    return MemorySummaryService(
+        uow_factory, DeterministicSummaryGenerator(), MaintenanceConfig(), principal
+    )
+
+
+# --- Authentication (Stage 14 Phase 2) --------------------------------------
+def require_auth_enabled(settings: Settings = Depends(get_app_settings)) -> None:
+    """Gate the /auth router: 404 when AUTH_ENABLED is false (feature hidden)."""
+    if not settings.auth_enabled:
+        raise AppException(
+            "Not found", error_code="not_found", status_code=404
+        )
+
+
+def get_password_hasher() -> PasswordHasher:
+    """Provide the configured password hasher (process-wide singleton)."""
+    return build_password_hasher()
+
+
+def get_token_service(clock: Clock = Depends(get_clock)) -> TokenService:
+    """Provide the access-token service (clock-driven expiry)."""
+    return build_token_service(clock)
+
+
+def get_refresh_token_store(clock: Clock = Depends(get_clock)) -> RefreshTokenStore:
+    """Provide the refresh-token store (NoOp when auth disabled, else Redis)."""
+    return build_refresh_token_store(clock)
+
+
+def get_auth_service(
+    settings: Settings = Depends(get_app_settings),
+    hasher: PasswordHasher = Depends(get_password_hasher),
+    token_service: TokenService = Depends(get_token_service),
+    refresh_store: RefreshTokenStore = Depends(get_refresh_token_store),
+    clock: Clock = Depends(get_clock),
+) -> AuthService:
+    """Assemble the AuthService for a request from its collaborators."""
+    def uow_factory() -> UnitOfWork:
+        return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+    return AuthService(
+        uow_factory,
+        hasher,
+        token_service,
+        refresh_store,
+        clock,
+        refresh_ttl_seconds=settings.refresh_token_expire_days * 86400,
+    )
 
 
 # Convenience aliases for annotated dependencies.
@@ -351,3 +492,6 @@ AgentRuntimeDep = Depends(get_agent_runtime)
 QueryUseCaseDep = Depends(get_query_use_case)
 SummaryServiceDep = Depends(get_summary_service)
 TraceRecorderDep = Depends(get_trace_recorder)
+MetricsSinkDep = Depends(get_metrics_sink)
+AuthServiceDep = Depends(get_auth_service)
+CurrentPrincipalDep = Depends(get_current_principal)

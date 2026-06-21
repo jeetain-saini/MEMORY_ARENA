@@ -13,9 +13,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from uuid import UUID
 
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.summary_dto import SummaryRefreshResult
 from app.application.interfaces.summary_generator import SummaryGenerator
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.authorization import resolve_scope
 from app.application.services.maintenance.config import MaintenanceConfig
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_summary import MemorySummary
@@ -29,17 +31,21 @@ class MemorySummaryService:
         uow_factory: Callable[[], UnitOfWork],
         generator: SummaryGenerator,
         config: MaintenanceConfig | None = None,
+        principal: AuthPrincipal | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._generator = generator
         self._config = config or MaintenanceConfig()
+        self._principal = principal
 
     # -- reads (thin passthroughs to the repository) -----------------------
     async def list_for_user(self, user_id: UUID) -> list[MemorySummary]:
+        user_id = resolve_scope(self._principal, user_id)
         async with self._uow_factory() as uow:
             return await uow.summaries.list_for_user(user_id)
 
     async def get(self, user_id: UUID, scope: MemoryType) -> MemorySummary | None:
+        user_id = resolve_scope(self._principal, user_id)
         async with self._uow_factory() as uow:
             return await uow.summaries.get(user_id, scope)
 

@@ -11,6 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from app.application.dto.metrics_dto import MetricsSnapshot
 from app.application.dto.observability_dto import RequestTrace
 
 
@@ -117,4 +118,29 @@ class RequestTraceSchema(BaseModel):
             iterations=dto.iterations,
             tool_calls=dto.tool_calls,
             total_tokens=dto.total_tokens,
+        )
+
+
+# --- performance metrics (Stage 14 Phase 5) -------------------------------
+class LatencyStatSchema(BaseModel):
+    count: int
+    avg_ms: float
+    p50_ms: float
+    p95_ms: float
+
+
+class MetricsSnapshotSchema(BaseModel):
+    counters: dict[str, int]
+    latencies: dict[str, LatencyStatSchema]
+
+    @classmethod
+    def from_dto(cls, dto: MetricsSnapshot) -> "MetricsSnapshotSchema":
+        return cls(
+            counters=dict(dto.counters),
+            latencies={
+                name: LatencyStatSchema(
+                    count=stat.count, avg_ms=stat.avg_ms, p50_ms=stat.p50_ms, p95_ms=stat.p95_ms
+                )
+                for name, stat in dto.latencies.items()
+            },
         )

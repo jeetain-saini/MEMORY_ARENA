@@ -7,20 +7,39 @@ subgraph traversal, path search, and related-memory expansion. The heavy lifting
 
 from __future__ import annotations
 
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.graph_dto import (
     GraphEdgeType,
     GraphNode,
     GraphPath,
     GraphTraversalResult,
 )
+from app.application.exceptions import ResourceNotFoundForCaller
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.services.authorization import authorize_owner
 from app.application.services.graph.config import GraphConfig
 
 
 class GraphTraversalService:
-    def __init__(self, repository: GraphRepository, config: GraphConfig | None = None) -> None:
+    def __init__(
+        self,
+        repository: GraphRepository,
+        config: GraphConfig | None = None,
+        principal: AuthPrincipal | None = None,
+    ) -> None:
         self._repo = repository
         self._config = config or GraphConfig()
+        self._principal = principal
+
+    def _authorize_node(self, node: GraphNode | None) -> None:
+        """Ownership guard for a graph node (no-op when auth is disabled)."""
+        if self._principal is None:
+            return
+        if node is None:
+            raise ResourceNotFoundForCaller()
+        owner = node.properties.get("user_id")
+        if str(owner) != str(self._principal.user_id):
+            raise ResourceNotFoundForCaller()
 
     async def neighbors(
         self, node_id: str, *, edge_types: list[GraphEdgeType] | None = None
@@ -29,6 +48,7 @@ class GraphTraversalService:
 
     async def traverse(self, node_id: str, *, depth: int = 1) -> GraphTraversalResult:
         root = await self._repo.get_node(node_id)
+        self._authorize_node(root)
         neighbor_nodes = await self._repo.find_neighbors(node_id, depth=depth)
 
         nodes: dict[str, GraphNode] = {}

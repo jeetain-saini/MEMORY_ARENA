@@ -17,7 +17,15 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.application.exceptions import MemoryNotFoundException, MemoryValidationException
+from app.application.exceptions import (
+    AuthenticationError,
+    AuthorizationError,
+    EmailAlreadyRegisteredError,
+    MemoryNotFoundException,
+    MemoryValidationException,
+    RateLimitExceeded,
+    ResourceNotFoundForCaller,
+)
 from app.core.logging import get_request_id
 from app.domain.exceptions.errors import (
     DomainError,
@@ -81,6 +89,46 @@ def register_exception_handlers(app: FastAPI) -> None:
         return JSONResponse(
             status_code=status.HTTP_404_NOT_FOUND,
             content=_envelope(get_request_id(), "memory_not_found", str(exc)),
+        )
+
+    @app.exception_handler(AuthenticationError)
+    async def _handle_authentication_error(_: Request, exc: AuthenticationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content=_envelope(get_request_id(), "authentication_error", str(exc)),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    @app.exception_handler(EmailAlreadyRegisteredError)
+    async def _handle_email_conflict(_: Request, exc: EmailAlreadyRegisteredError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content=_envelope(get_request_id(), "email_already_registered", str(exc)),
+        )
+
+    @app.exception_handler(AuthorizationError)
+    async def _handle_authorization_error(_: Request, exc: AuthorizationError) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=_envelope(get_request_id(), "authorization_error", str(exc)),
+        )
+
+    @app.exception_handler(ResourceNotFoundForCaller)
+    async def _handle_resource_not_found(_: Request, exc: ResourceNotFoundForCaller) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_404_NOT_FOUND,
+            content=_envelope(get_request_id(), "not_found", str(exc)),
+        )
+
+    @app.exception_handler(RateLimitExceeded)
+    async def _handle_rate_limited(_: Request, exc: RateLimitExceeded) -> JSONResponse:
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content=_envelope(get_request_id(), "rate_limited", str(exc)),
+            headers={
+                "Retry-After": str(exc.retry_after_seconds),
+                "X-RateLimit-Reset": str(exc.reset_epoch),
+            },
         )
 
     @app.exception_handler(MemoryValidationException)

@@ -18,6 +18,7 @@ from app.repositories.memory_relation_repository import MemoryRelationRepository
 from app.repositories.memory_repository import MemoryRepositoryImpl
 from app.repositories.memory_summary_repository import MemorySummaryRepositoryImpl
 from app.repositories.memory_version_repository import MemoryVersionRepositoryImpl
+from app.repositories.user_repository import UserRepositoryImpl
 
 
 class SQLAlchemyUnitOfWork(UnitOfWork):
@@ -27,6 +28,7 @@ class SQLAlchemyUnitOfWork(UnitOfWork):
 
     async def __aenter__(self) -> "SQLAlchemyUnitOfWork":
         self._session = self._session_factory()
+        self.users = UserRepositoryImpl(self._session)
         self.memories = MemoryRepositoryImpl(self._session)
         self.relations = MemoryRelationRepositoryImpl(self._session)
         self.versions = MemoryVersionRepositoryImpl(self._session)

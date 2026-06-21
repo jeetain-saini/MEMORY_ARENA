@@ -12,9 +12,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.graph_dto import ExpandedMemory, GraphAwareResult
 from app.application.dto.retrieval_dto import MemorySearchQuery, RetrievalResult
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.services.authorization import resolve_scope
 from app.application.services.graph.config import GraphConfig
 from app.application.services.retrieval.retrieval_service import MemoryRetrievalService
 from app.domain.value_objects.memory_status import MemoryStatus
@@ -27,10 +29,12 @@ class GraphAwareRetrievalService:
         retrieval_service: MemoryRetrievalService,
         repository: GraphRepository,
         config: GraphConfig | None = None,
+        principal: AuthPrincipal | None = None,
     ) -> None:
         self._retrieval = retrieval_service
         self._repo = repository
         self._config = config or GraphConfig()
+        self._principal = principal
 
     async def search(
         self, query: MemorySearchQuery, *, expand_depth: int | None = None
@@ -51,6 +55,7 @@ class GraphAwareRetrievalService:
         already run hybrid retrieval can reuse those hits instead of retrieving a
         second time. ``search`` simply retrieves then delegates here.
         """
+        resolve_scope(self._principal, query.user_id)
         depth = expand_depth or self._config.expansion_depth
 
         results: list[ExpandedMemory] = []

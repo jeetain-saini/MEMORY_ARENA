@@ -7,9 +7,11 @@ API grows.
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.api.v1.dependencies.ratelimit import enforce_rate_limit
 from app.api.v1.routes import (
+    auth,
     context,
     graph,
     health,
@@ -21,8 +23,11 @@ from app.api.v1.routes import (
     summaries,
 )
 
-api_router = APIRouter()
+# The rate-limit dependency is attached at the aggregate router so every v1
+# route is covered uniformly; it no-ops when disabled and exempts health/version.
+api_router = APIRouter(dependencies=[Depends(enforce_rate_limit)])
 api_router.include_router(health.router)
+api_router.include_router(auth.router)
 api_router.include_router(memories.router)
 api_router.include_router(retrieval.router)
 api_router.include_router(context.router)

@@ -46,3 +46,26 @@ def test_monotonic_clock_is_non_decreasing() -> None:
     a = clock.now()
     b = clock.now()
     assert b >= a
+
+
+# --- now_epoch (Stage 14: wall-clock for token expiry) ---------------------
+
+def test_monotonic_clock_now_epoch_is_wall_time() -> None:
+    import time
+
+    clock = MonotonicClock()
+    assert abs(clock.now_epoch() - time.time()) < 5.0
+
+
+def test_frozen_clock_epoch_is_controllable() -> None:
+    clock = FrozenClock(epoch=1_700_000_000.0)
+    assert clock.now_epoch() == 1_700_000_000.0
+    # now_epoch does not auto-advance (unlike monotonic now()).
+    assert clock.now_epoch() == 1_700_000_000.0
+
+
+def test_frozen_clock_advance_moves_both_clocks() -> None:
+    clock = FrozenClock(start=10.0, epoch=1000.0)
+    clock.advance(5.0)
+    assert clock.now() == 15.0
+    assert clock.now_epoch() == 1005.0

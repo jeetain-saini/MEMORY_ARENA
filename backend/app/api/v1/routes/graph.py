@@ -15,11 +15,15 @@ from uuid import UUID
 from fastapi import APIRouter
 
 from app.api.v1.dependencies.providers import (
+    CurrentPrincipalDep,
     GraphAwareRetrievalServiceDep,
     GraphRepositoryDep,
     GraphTraversalServiceDep,
 )
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.services.authorization import authorize_owner
+from app.application.exceptions import ResourceNotFoundForCaller
 from app.application.services.graph.graph_aware_retrieval import GraphAwareRetrievalService
 from app.application.services.graph.traversal_service import GraphTraversalService
 from app.core.logging import get_request_id
@@ -35,6 +39,14 @@ from app.schemas.graph import (
 from app.schemas.responses import APIResponse
 
 router = APIRouter(prefix="/graph", tags=["graph"])
+
+
+def _node_owner(node) -> UUID:  # type: ignore[no-untyped-def]
+    """Parse a graph node's owner user_id (404 to callers if absent/invalid)."""
+    try:
+        return UUID(str(node.properties.get("user_id")))
+    except (TypeError, ValueError):
+        raise ResourceNotFoundForCaller() from None
 
 
 @router.post(
@@ -71,9 +83,16 @@ async def graph_traverse(
 async def graph_memory(
     memory_id: UUID,
     repository: GraphRepository = GraphRepositoryDep,
+    principal: AuthPrincipal | None = CurrentPrincipalDep,
 ) -> APIResponse[GraphMemoryViewSchema]:
     node_id = str(memory_id)
     node = await repository.get_node(node_id)
+    # Ownership: a caller may only view their own memory's graph node (404 to
+    # others). No-op when auth is disabled.
+    if principal is not None:
+        if node is None:
+            raise ResourceNotFoundForCaller()
+        authorize_owner(principal, _node_owner(node))
     neighbors = await repository.find_neighbors(node_id, depth=1)
     edges = await repository.get_edges(node_id)
     view = GraphMemoryViewSchema(

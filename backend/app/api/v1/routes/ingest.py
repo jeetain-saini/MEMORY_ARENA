@@ -15,8 +15,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, status
 
-from app.api.v1.dependencies.providers import WorkflowProcessorDep
+from app.api.v1.dependencies.providers import CurrentPrincipalDep, WorkflowProcessorDep
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.interfaces.workflow_job_processor import WorkflowJob, WorkflowJobProcessor
+from app.application.services.authorization import resolve_scope
 from app.core.logging import get_request_id
 from app.schemas.ingest import IngestAcceptedSchema, IngestRequestSchema
 from app.schemas.responses import APIResponse
@@ -33,7 +35,11 @@ router = APIRouter(prefix="/ingest", tags=["ingest"])
 async def ingest(
     payload: IngestRequestSchema,
     processor: WorkflowJobProcessor = WorkflowProcessorDep,
+    principal: AuthPrincipal | None = CurrentPrincipalDep,
 ) -> APIResponse[IngestAcceptedSchema]:
+    # No authenticated user may create memories for another user. Enforced
+    # synchronously here because ingestion is processed off the request path.
+    resolve_scope(principal, payload.user_id)
     job_id = uuid4()
     await processor.submit(
         WorkflowJob(job_id=job_id, user_id=payload.user_id, raw_text=payload.text)

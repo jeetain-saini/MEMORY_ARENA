@@ -17,8 +17,19 @@ from abc import ABC, abstractmethod
 
 
 class Clock(ABC):
-    """A monotonic time source. Differences between ``now()`` reads are durations."""
+    """A time source with two faces.
+
+    ``now()`` is **monotonic** (durations only); ``now_epoch()`` is **wall-clock**
+    Unix time (absolute timestamps). They are intentionally separate: monotonic
+    time is immune to clock adjustments and right for measuring stage latency,
+    while Unix time is what JWT ``iat``/``exp`` and refresh-token expiry require.
+    Both are injectable so tokens and timings stay deterministic in tests.
+    """
 
     @abstractmethod
     def now(self) -> float:
-        """Return the current monotonic time in seconds."""
+        """Return the current monotonic time in seconds (for durations)."""
+
+    @abstractmethod
+    def now_epoch(self) -> float:
+        """Return the current wall-clock time as Unix epoch seconds."""

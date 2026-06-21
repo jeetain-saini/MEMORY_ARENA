@@ -19,6 +19,22 @@ from app.application.dto.memory_dto import MemorySearchRequest
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_relation import MemoryRelation
 from app.domain.entities.memory_version import MemoryVersion
+from app.domain.entities.user import User
+from app.domain.value_objects.memory_status import MemoryStatus
+from app.domain.value_objects.memory_type import MemoryType
+
+
+class UserRepository(ABC):
+    """Persistence port for user accounts (identity + credentials)."""
+
+    @abstractmethod
+    async def add(self, user: User) -> User: ...
+
+    @abstractmethod
+    async def get_by_id(self, user_id: UUID) -> User | None: ...
+
+    @abstractmethod
+    async def get_by_email(self, email: str) -> User | None: ...
 
 
 class MemoryRepository(ABC):
@@ -107,4 +123,22 @@ class MemoryEmbeddingRepository(ABC):
 
         Used by vector retrieval to score candidates. (A production deployment
         may push this down to a pgvector ANN index; the port stays the same.)
+        """
+
+    @abstractmethod
+    async def search_similar(
+        self,
+        user_id: UUID,
+        query_vector: list[float],
+        *,
+        limit: int,
+        model_name: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        statuses: list[MemoryStatus] | None = None,
+    ) -> list[tuple[Memory, float]]:
+        """Top-k (memory, cosine_score) for a user (Stage 14 Phase 5).
+
+        On PostgreSQL this pushes the ranking down to pgvector (``ORDER BY <=>``,
+        HNSW-ready); on other dialects it falls back to an exact brute-force scan
+        identical to ``list_candidates`` + cosine, so the result is the same.
         """

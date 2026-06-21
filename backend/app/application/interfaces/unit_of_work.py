@@ -19,6 +19,7 @@ from app.application.interfaces.repositories import (
     MemoryRelationRepository,
     MemoryRepository,
     MemoryVersionRepository,
+    UserRepository,
 )
 from app.application.interfaces.summary_repository import MemorySummaryRepository
 
@@ -26,6 +27,7 @@ from app.application.interfaces.summary_repository import MemorySummaryRepositor
 class UnitOfWork(ABC):
     """Async context manager exposing the repositories of one transaction."""
 
+    users: UserRepository
     memories: MemoryRepository
     relations: MemoryRelationRepository
     versions: MemoryVersionRepository

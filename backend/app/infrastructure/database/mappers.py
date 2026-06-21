@@ -16,6 +16,7 @@ from app.domain.entities.memory_relation import MemoryRelation
 from app.domain.entities.memory_score import MemoryScore
 from app.domain.entities.memory_summary import MemorySummary
 from app.domain.entities.memory_version import MemoryVersion
+from app.domain.entities.user import User
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 from app.domain.value_objects.relation_type import RelationType
@@ -25,6 +26,32 @@ from app.infrastructure.database.models.memory_relation import MemoryRelationMod
 from app.infrastructure.database.models.memory_score import MemoryScoreModel
 from app.infrastructure.database.models.memory_summary import MemorySummaryModel
 from app.infrastructure.database.models.memory_version import MemoryVersionModel
+from app.infrastructure.database.models.user import UserModel
+
+
+# --- User <-> UserModel ----------------------------------------------------
+def user_to_model(user: User) -> UserModel:
+    return UserModel(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        password_hash=user.password_hash,
+        is_active=user.is_active,
+        tenant_id=user.tenant_id,
+    )
+
+
+def model_to_user(model: UserModel) -> User:
+    return User(
+        id=model.id,
+        email=model.email,
+        display_name=model.display_name,
+        password_hash=model.password_hash,
+        is_active=model.is_active,
+        tenant_id=model.tenant_id,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
 
 
 # --- MemoryScore <-> MemoryScoreModel --------------------------------------

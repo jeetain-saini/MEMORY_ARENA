@@ -17,9 +17,15 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.health_dto import MemoryHealth
+from app.application.interfaces.cache_provider import CacheProvider
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.authorization import resolve_scope
+from app.application.services.cache.cache_keys import health_key
+from app.application.services.cache.serialization import dump_health, load_health
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_summary import MemorySummary
 from app.domain.value_objects.memory_status import MemoryStatus
@@ -43,20 +49,53 @@ _NOTES = {
 
 
 class MemoryHealthService:
-    def __init__(self, uow: UnitOfWork, graph_repository: GraphRepository) -> None:
+    def __init__(
+        self,
+        uow: UnitOfWork,
+        graph_repository: GraphRepository,
+        principal: AuthPrincipal | None = None,
+        cache: CacheProvider | None = None,
+        metrics: MetricsSink | None = None,
+        cache_ttl_seconds: int = 60,
+    ) -> None:
         self._uow = uow
         self._graph = graph_repository
+        self._principal = principal
+        self._cache = cache
+        self._metrics = metrics
+        self._ttl = cache_ttl_seconds
 
     async def get_health(
         self, user_id: UUID | None = None, *, now: datetime | None = None
     ) -> MemoryHealth:
+        user_id = resolve_scope(self._principal, user_id)
+        key = health_key(user_id)
+
+        # Cache only the wall-clock-default path; a caller-supplied ``now`` is a
+        # test/deterministic override and must not read or pollute the cache.
+        use_cache = self._cache is not None and now is None
+        if use_cache:
+            cached = await self._cache.get(key)
+            if cached is not None:
+                self._record("cache.hit.health")
+                return load_health(cached)
+            self._record("cache.miss.health")
+
         now = now or datetime.now(timezone.utc)
         async with self._uow as uow:
             memories = await uow.memories.list_for_analytics(user_id)
             summaries = await uow.summaries.list_for_user(user_id) if user_id is not None else []
         nodes = await self._graph.count_nodes(user_id)
         edges = await self._graph.count_edges(user_id)
-        return self._aggregate(memories, summaries, nodes, edges, user_id, now)
+        result = self._aggregate(memories, summaries, nodes, edges, user_id, now)
+
+        if use_cache:
+            await self._cache.set(key, dump_health(result), ttl_seconds=self._ttl)
+        return result
+
+    def _record(self, name: str) -> None:
+        if self._metrics is not None:
+            self._metrics.incr(name)
 
     def _aggregate(
         self,
@@ -79,8 +118,15 @@ class MemoryHealthService:
 
         cutoff_7 = now - timedelta(days=7)
         cutoff_30 = now - timedelta(days=30)
-        created_7 = sum(1 for m in memories if m.created_at >= cutoff_7)
-        created_30 = sum(1 for m in memories if m.created_at >= cutoff_30)
+        # Coerce naive timestamps (e.g. round-tripped through SQLite) to UTC so the
+        # comparison never mixes naive/aware datetimes — mirrors the defensive
+        # normalization in MemoryIntelligenceService._should_archive.
+        created_at = [
+            m.created_at if m.created_at.tzinfo else m.created_at.replace(tzinfo=timezone.utc)
+            for m in memories
+        ]
+        created_7 = sum(1 for ts in created_at if ts >= cutoff_7)
+        created_30 = sum(1 for ts in created_at if ts >= cutoff_30)
 
         density = round(graph_edges / graph_nodes, 4) if graph_nodes else 0.0
 

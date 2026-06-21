@@ -69,3 +69,24 @@ def passes_filters(memory: Memory, filters: RetrievalFilters) -> bool:
     if filters.memory_types is not None and memory.memory_type not in filters.memory_types:
         return False
     return True
+
+
+def rank_candidates(
+    candidates: list[tuple[Memory, list[float]]],
+    query_vector: list[float],
+    filters: RetrievalFilters,
+    limit: int,
+) -> list[tuple[Memory, float]]:
+    """Filter + cosine-score + top-k (the brute-force vector ranking).
+
+    The single source of brute-force ranking, shared by ``BruteForceVectorIndex``
+    and the repository's non-PostgreSQL ``search_similar`` fallback, so they are
+    guaranteed identical (and identical to the pre-Phase-5 ``VectorRetriever``).
+    """
+    scored = [
+        (memory, cosine_similarity(query_vector, vector))
+        for memory, vector in candidates
+        if passes_filters(memory, filters)
+    ]
+    scored.sort(key=lambda s: s[1], reverse=True)
+    return scored[:limit]

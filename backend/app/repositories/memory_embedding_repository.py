@@ -16,8 +16,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.application.dto.embedding_dto import EmbeddingRecord
+from app.application.dto.retrieval_dto import RetrievalFilters
 from app.application.interfaces.repositories import MemoryEmbeddingRepository
+from app.application.services.retrieval.scoring import rank_candidates
 from app.domain.entities.memory import Memory
+from app.domain.value_objects.memory_status import MemoryStatus
+from app.domain.value_objects.memory_type import MemoryType
 from app.infrastructure.database.mappers import (
     embedding_to_model,
     model_to_embedding,
@@ -74,6 +78,60 @@ class MemoryEmbeddingRepositoryImpl(MemoryEmbeddingRepository):
             stmt = stmt.where(MemoryEmbeddingModel.model_name == model_name)
         rows = await self._session.execute(stmt)
         return [(model_to_memory(memory), list(vector)) for memory, vector in rows.all()]
+
+    async def search_similar(
+        self,
+        user_id: uuid.UUID,
+        query_vector: list[float],
+        *,
+        limit: int,
+        model_name: str | None = None,
+        memory_types: list[MemoryType] | None = None,
+        statuses: list[MemoryStatus] | None = None,
+    ) -> list[tuple[Memory, float]]:
+        if self._session.bind is not None and self._session.bind.dialect.name == "postgresql":
+            return await self._search_pgvector(
+                user_id, query_vector, limit=limit, model_name=model_name,
+                memory_types=memory_types, statuses=statuses,
+            )
+        # Non-PostgreSQL (e.g. SQLite in tests): exact brute-force fallback,
+        # identical to BruteForceVectorIndex.
+        candidates = await self.list_candidates(user_id, model_name=model_name)
+        filters = RetrievalFilters(memory_types=memory_types, statuses=statuses)
+        return rank_candidates(candidates, query_vector, filters, limit)
+
+    async def _search_pgvector(
+        self,
+        user_id: uuid.UUID,
+        query_vector: list[float],
+        *,
+        limit: int,
+        model_name: str | None,
+        memory_types: list[MemoryType] | None,
+        statuses: list[MemoryStatus] | None,
+    ) -> list[tuple[Memory, float]]:
+        # pgvector cosine distance operator (<=>); cosine_similarity = 1 - distance.
+        # Uses the HNSW index when present (ORDER BY <=> ... LIMIT), exact otherwise.
+        distance = MemoryEmbeddingModel.vector.op("<=>")(query_vector)
+        effective_statuses = statuses or [MemoryStatus.ACTIVE]
+        stmt = (
+            select(MemoryModel, (1 - distance).label("score"))
+            .join(MemoryEmbeddingModel, MemoryEmbeddingModel.memory_id == MemoryModel.id)
+            .options(selectinload(MemoryModel.score))
+            .where(
+                MemoryModel.user_id == user_id,
+                MemoryModel.deleted_at.is_(None),
+                MemoryModel.status.in_([s.value for s in effective_statuses]),
+            )
+            .order_by(distance)
+            .limit(limit)
+        )
+        if model_name is not None:
+            stmt = stmt.where(MemoryEmbeddingModel.model_name == model_name)
+        if memory_types is not None:
+            stmt = stmt.where(MemoryModel.memory_type.in_([t.value for t in memory_types]))
+        rows = await self._session.execute(stmt)
+        return [(model_to_memory(memory), float(score)) for memory, score in rows.all()]
 
     async def _get_model(
         self, memory_id: uuid.UUID, model_name: str

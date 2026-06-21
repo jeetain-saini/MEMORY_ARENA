@@ -15,3 +15,6 @@ from app.application.interfaces.clock import Clock
 class MonotonicClock(Clock):
     def now(self) -> float:
         return time.monotonic()
+
+    def now_epoch(self) -> float:
+        return time.time()

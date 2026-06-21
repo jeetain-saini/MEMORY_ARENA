@@ -14,11 +14,13 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
+from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.memory_dto import CreateMemoryResponse
 from app.application.exceptions import MemoryNotFoundException, MemoryValidationException
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.presenters import memory_to_response
+from app.application.services.authorization import authorize_owner
 from app.application.services.decay_strategies import (
     DecayStrategy,
     ExponentialDecayStrategy,
@@ -47,11 +49,13 @@ class MemoryIntelligenceService:
         dispatcher: EventDispatcher,
         config: IntelligenceConfig | None = None,
         decay_strategy: DecayStrategy | None = None,
+        principal: AuthPrincipal | None = None,
     ) -> None:
         self._uow = uow
         self._dispatcher = dispatcher
         self._config = config or IntelligenceConfig()
         self._decay = decay_strategy or ExponentialDecayStrategy()
+        self._principal = principal
 
     # -- evaluation (calculate importance) ---------------------------------
     async def evaluate_memory(self, memory_id: UUID, *, now: datetime | None = None) -> MemoryEvaluation:
@@ -126,6 +130,9 @@ class MemoryIntelligenceService:
         memory = await uow.memories.get_by_id(memory_id)
         if memory is None or (user_id is not None and memory.user_id != user_id):
             raise MemoryNotFoundException(memory_id)
+        # Authorization: an authenticated caller may only touch their own memory
+        # (no-op when auth is disabled). Reported as 404 to avoid leaking existence.
+        authorize_owner(self._principal, memory.user_id)
         return memory
 
     def _evaluate(self, memory: Memory, now: datetime) -> MemoryEvaluation:

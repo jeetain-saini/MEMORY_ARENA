@@ -23,6 +23,9 @@ dependencies = [
   # Graph & cache
   "neo4j>=5.25",
   "redis>=5.1",
+  # Authentication (Stage 14)
+  "pyjwt>=2.9",
+  "bcrypt>=4.1",
   # LLM orchestration
   "langgraph>=0.2",
   "langchain>=0.3",

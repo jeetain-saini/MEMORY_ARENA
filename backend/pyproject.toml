@@ -38,6 +38,12 @@ langgraph = [
   "langchain>=0.3",
   "langchain-core>=0.3",
 ]
+# NVIDIA NIM answer generation — only needed when LLM_PROVIDER=nvidia. The
+# ChatNVIDIA import in nvidia_provider.py is lazy, so omitting this does not
+# break startup or the offline defaults.
+nvidia = [
+  "langchain-nvidia-ai-endpoints>=0.3",
+]
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",

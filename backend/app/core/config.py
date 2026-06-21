@@ -74,8 +74,11 @@ class Settings(BaseSettings):
     # --- LLM providers ----------------------------------------------------
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
-    # Provider selection for the extraction workflow: "deterministic" (offline
-    # default; dev/tests), "openai", or "anthropic".
+    nvidia_api_key: str | None = None
+    # Provider selection for LLM generation (agent answers + extraction):
+    # "deterministic" (offline default; dev/tests), "openai", "anthropic", or
+    # "nvidia" (NVIDIA NIM via ChatNVIDIA). For non-OpenAI providers, set
+    # LLM_MODEL to a model id that provider serves.
     llm_provider: str = "deterministic"
     llm_model: str = "gpt-4o-mini"
     # Extraction workflow engine: "sequential" (offline default, no LangGraph)

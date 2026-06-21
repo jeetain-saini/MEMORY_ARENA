@@ -42,6 +42,7 @@ class AgentConfig:
     max_iterations: int = 1           # planning-round ceiling (future tool loops)
     max_tool_calls: int = 8           # total tool invocations across the run
     max_citations: int = 10           # citation count cap after validation
+    citation_grounding_threshold: float = 0.3  # min answer-overlap to cite a memory
     timeout_seconds: float = 30.0     # whole-run wall-clock guard
     top_k: int = 10                   # retrieval breadth
     expand_graph: bool = True         # run the graph-expansion stage

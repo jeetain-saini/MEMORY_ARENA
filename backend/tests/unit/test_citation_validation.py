@@ -60,3 +60,70 @@ def test_negative_max_means_no_limit() -> None:
     prov = {m.memory_id: "hybrid" for m in mems}
     cites = build_citations(mems, prov, known, max_citations=-1)
     assert len(cites) == 5
+
+
+# --- answer-grounded citations (Option C) ---------------------------------
+
+def test_grounded_memory_used_is_cited() -> None:
+    mid = uuid4()
+    m = _cm("Alice uses Python and FastAPI for backend services", 0.8, mid=mid)
+    cites = build_citations(
+        [m], {mid: "hybrid"}, {mid}, max_citations=10,
+        answer="Alice uses Python and FastAPI.",
+    )
+    assert [c.memory_id for c in cites] == [mid]
+
+
+def test_grounded_unrelated_memory_is_dropped() -> None:
+    mid = uuid4()
+    m = _cm("Alice uses Python and FastAPI for backend services", 0.8, mid=mid)
+    cites = build_citations(
+        [m], {mid: "hybrid"}, {mid}, max_citations=10,
+        answer="Cricket is a bat-and-ball sport played between two teams of eleven.",
+    )
+    assert cites == []
+
+
+def test_pure_general_knowledge_answer_has_zero_citations() -> None:
+    mems = [
+        _cm("Alice uses Python and FastAPI for backend services", 0.9),
+        _cm("Experienced with async SQLAlchemy and pgvector", 0.8),
+        _cm("Building MemoryArena, a self-evolving AI memory platform", 0.7),
+        _cm("I no longer use Postgres; the demo runs on SQLite", 0.6),
+    ]
+    known = {m.memory_id for m in mems}
+    prov = {m.memory_id: "hybrid" for m in mems}
+    answer = "Cricket is a bat-and-ball game played between two teams of eleven players."
+    cites = build_citations(mems, prov, known, max_citations=10, answer=answer)
+    assert cites == []
+
+
+def test_hybrid_answer_cites_only_relevant_memories() -> None:
+    py = _cm("Alice uses Python and FastAPI for backend services", 0.9)
+    sqla = _cm("Experienced with async SQLAlchemy and pgvector", 0.8)
+    proj = _cm("Building MemoryArena, a self-evolving AI memory platform", 0.7)
+    mems = [py, sqla, proj]
+    known = {m.memory_id for m in mems}
+    prov = {m.memory_id: "hybrid" for m in mems}
+    answer = "Alice already uses FastAPI and Python, so it is a good fit for her."
+    cites = build_citations(mems, prov, known, max_citations=10, answer=answer)
+    ids = {c.memory_id for c in cites}
+    assert py.memory_id in ids          # FastAPI/Python appear in the answer
+    assert sqla.memory_id not in ids    # SQLAlchemy/pgvector do not
+    assert proj.memory_id not in ids    # MemoryArena/platform do not
+
+
+def test_answer_none_is_legacy_cite_all() -> None:
+    mems = [_cm("unrelated to the answer text", 0.5), _cm("also unrelated", 0.4)]
+    known = {m.memory_id for m in mems}
+    prov = {m.memory_id: "hybrid" for m in mems}
+    cites = build_citations(mems, prov, known, max_citations=10, answer=None)
+    assert len(cites) == 2  # grounding skipped -> legacy behavior
+
+
+def test_empty_or_timeout_answer_yields_zero_citations() -> None:
+    mid = uuid4()
+    m = _cm("Alice uses Python", 0.8, mid=mid)
+    for blank in ("", "   ", "\n\t"):
+        cites = build_citations([m], {mid: "hybrid"}, {mid}, max_citations=10, answer=blank)
+        assert cites == [], f"expected zero citations for answer={blank!r}"

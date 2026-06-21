@@ -179,7 +179,12 @@ def _finalize_citations(state: AgentState) -> None:
         return
     known = set(state.provenance)
     state.citations = build_citations(
-        package.memories, state.provenance, known, state.config.max_citations
+        package.memories,
+        state.provenance,
+        known,
+        state.config.max_citations,
+        answer=state.answer,
+        grounding_threshold=state.config.citation_grounding_threshold,
     )
 
 

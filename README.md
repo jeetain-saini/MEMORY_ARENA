@@ -554,6 +554,6 @@ The following items are documented as future work and are not yet implemented:
 
 ## License
 
-A license has not yet been selected for this project. Until a `LICENSE` file is
-added, all rights are reserved by the author. Please open an issue if you wish to
-discuss usage.
+MemoryArena is released under the MIT License.
+
+You are free to use, modify, and distribute this software in accordance with the terms of the license. See the LICENSE file for the full text.

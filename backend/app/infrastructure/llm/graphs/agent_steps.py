@@ -55,9 +55,16 @@ from app.infrastructure.observability.monotonic_clock import MonotonicClock
 AGENT_VERSION = "agent-v1"
 
 ANSWER_SYSTEM_PROMPT = (
-    "You are MemoryArena's answering agent. Answer the user's question using "
-    "ONLY the provided memory context. Be concise and faithful to the memories. "
-    "If the context is insufficient, say so plainly rather than inventing facts."
+    "You are MemoryArena's answering agent. You receive the user's question and a "
+    "set of retrieved memories about the user.\n"
+    "- Prefer the retrieved memories whenever they are relevant; ground "
+    "user-specific facts in them.\n"
+    "- If the memories do not cover the question, answer from your own general "
+    "knowledge instead of refusing.\n"
+    "- Clearly distinguish the two: attribute user-specific claims to the "
+    "memories, and present general explanations as model knowledge.\n"
+    "- Never claim a memory that is not in the provided context, and never invent "
+    "user-specific facts. Be concise."
 )
 
 
@@ -157,7 +164,11 @@ def build_answer_prompt(state: AgentState) -> str:
             parts.append("Related memories (via knowledge graph):")
             parts.extend(f"- {c}" for c in related[:10])
     parts.append("")
-    parts.append("Answer the question using only the context above.")
+    parts.append(
+        "Answer the question. Use the memories above for anything specific to the "
+        "user; if they do not cover it, use your general knowledge and note that it "
+        "is general knowledge. Do not invent memories that are not listed above."
+    )
     return "\n".join(parts)
 
 

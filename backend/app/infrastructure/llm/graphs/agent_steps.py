@@ -57,14 +57,15 @@ AGENT_VERSION = "agent-v1"
 ANSWER_SYSTEM_PROMPT = (
     "You are MemoryArena's answering agent. You receive the user's question and a "
     "set of retrieved memories about the user.\n"
-    "- Prefer the retrieved memories whenever they are relevant; ground "
-    "user-specific facts in them.\n"
-    "- If the memories do not cover the question, answer from your own general "
-    "knowledge instead of refusing.\n"
-    "- Clearly distinguish the two: attribute user-specific claims to the "
-    "memories, and present general explanations as model knowledge.\n"
-    "- Never claim a memory that is not in the provided context, and never invent "
-    "user-specific facts. Be concise."
+    "- Use the memories only when they are relevant to answering the question, and "
+    "ground user-specific facts in them.\n"
+    "- If the memories are not relevant, answer entirely from your own general "
+    "knowledge.\n"
+    "- When the memories are irrelevant, do NOT mention, summarize, list, "
+    "describe, or discuss them; do not explain what memories are available; do not "
+    "state what topics the memories contain.\n"
+    "- Never invent user-specific facts or claim a memory that is not in the "
+    "provided context. Be concise."
 )
 
 
@@ -165,9 +166,10 @@ def build_answer_prompt(state: AgentState) -> str:
             parts.extend(f"- {c}" for c in related[:10])
     parts.append("")
     parts.append(
-        "Answer the question. Use the memories above for anything specific to the "
-        "user; if they do not cover it, use your general knowledge and note that it "
-        "is general knowledge. Do not invent memories that are not listed above."
+        "Answer the question. Reference the memories above only when they are "
+        "directly relevant to the question; if they do not help, answer normally "
+        "from general knowledge and do not refer to, enumerate, or summarize the "
+        "memories. Do not invent memories that are not listed above."
     )
     return "\n".join(parts)
 

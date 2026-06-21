@@ -1,0 +1,26 @@
+# =============================================================================
+# MemoryArena backend — Render free-tier image.
+# Build context = ./backend. Binds Render's dynamic $PORT. Installs the runtime
+# deps only (no [langgraph] extra) for a slim image + fast cold start.
+# =============================================================================
+
+# ---- Builder ---------------------------------------------------------------
+FROM python:3.12-slim AS builder
+WORKDIR /app
+ENV PIP_NO_CACHE_DIR=1 PYTHONDONTWRITEBYTECODE=1
+COPY pyproject.toml ./
+# Runtime deps only — the sequential engines need no LangGraph/LangChain.
+RUN pip install --upgrade pip && pip install --prefix=/install .
+
+# ---- Runtime ---------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
+RUN useradd --create-home --uid 1000 appuser
+COPY --from=builder /install /usr/local
+COPY . .
+USER appuser
+
+# Render provides $PORT (default ~10000). Shell form so the env var expands.
+# Health-check the liveness route /api/v1/version (always 200, no datastore probes).
+CMD uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-10000}

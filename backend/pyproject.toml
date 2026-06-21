@@ -26,13 +26,18 @@ dependencies = [
   # Authentication (Stage 14)
   "pyjwt>=2.9",
   "bcrypt>=4.1",
-  # LLM orchestration
+]
+
+[project.optional-dependencies]
+# LLM orchestration — only needed for WORKFLOW_ENGINE/AGENT_RUNTIME/
+# CONSOLIDATION_ENGINE=langgraph. The offline-default "sequential" engines need
+# none of this, so free-tier deploys omit it (slimmer image, faster cold start).
+# All langgraph imports are lazy; the langgraph test suites importorskip.
+langgraph = [
   "langgraph>=0.2",
   "langchain>=0.3",
   "langchain-core>=0.3",
 ]
-
-[project.optional-dependencies]
 dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",

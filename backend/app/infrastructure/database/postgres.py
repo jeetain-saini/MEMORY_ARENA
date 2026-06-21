@@ -33,18 +33,31 @@ class PostgresManager:
     async def connect(self, settings: Settings) -> None:
         if self._engine is not None:
             return
-        self._engine = create_async_engine(
-            settings.postgres_url,
-            pool_size=settings.postgres_pool_size,
-            max_overflow=settings.postgres_max_overflow,
-            pool_timeout=settings.postgres_pool_timeout,
-            pool_pre_ping=True,  # transparently recycle stale connections
-            future=True,
-        )
+        if settings.is_sqlite:
+            # SQLite (free-tier/demo): the Postgres pool knobs don't apply. Use a
+            # connection-per-use NullPool against the file so SQLite's own locking
+            # handles concurrency; allow cross-thread use for the async driver.
+            from sqlalchemy.pool import NullPool
+
+            self._engine = create_async_engine(
+                settings.postgres_url,
+                connect_args={"check_same_thread": False},
+                poolclass=NullPool,
+                future=True,
+            )
+        else:
+            self._engine = create_async_engine(
+                settings.postgres_url,
+                pool_size=settings.postgres_pool_size,
+                max_overflow=settings.postgres_max_overflow,
+                pool_timeout=settings.postgres_pool_timeout,
+                pool_pre_ping=True,  # transparently recycle stale connections
+                future=True,
+            )
         self._sessionmaker = async_sessionmaker(
             bind=self._engine, expire_on_commit=False, class_=AsyncSession
         )
-        _logger.info("postgres.connected")
+        _logger.info("postgres.connected", extra={"dialect": "sqlite" if settings.is_sqlite else "postgresql"})
 
     async def disconnect(self) -> None:
         if self._engine is not None:
@@ -52,6 +65,12 @@ class PostgresManager:
             self._engine = None
             self._sessionmaker = None
             _logger.info("postgres.disconnected")
+
+    @property
+    def engine(self) -> AsyncEngine:
+        if self._engine is None:
+            raise RuntimeError("PostgresManager is not connected; call connect() first.")
+        return self._engine
 
     @property
     def sessionmaker(self) -> async_sessionmaker[AsyncSession]:

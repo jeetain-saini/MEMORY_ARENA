@@ -54,13 +54,20 @@ class Settings(BaseSettings):
     postgres_pool_timeout: int = 30
 
     # --- Redis -------------------------------------------------------------
-    redis_url: str = Field(..., description="Redis connection URL")
+    # Optional: only used when CACHE_BACKEND=redis, AUTH_ENABLED=true, or
+    # RATE_LIMIT_ENABLED=true. The default is a harmless placeholder so a minimal
+    # (free-tier) deployment with the no-op backends boots without configuring it;
+    # the async client is lazy, so it never connects unless actually used.
+    redis_url: str = "redis://localhost:6379/0"
     redis_max_connections: int = 50
 
     # --- Neo4j -------------------------------------------------------------
-    neo4j_uri: str = Field(..., description="Neo4j Bolt URI")
-    neo4j_username: str = Field(...)
-    neo4j_password: str = Field(...)
+    # Optional: only connected when GRAPH_BACKEND=neo4j (default is the in-memory
+    # graph). Defaults are placeholders so a minimal deployment boots; when the
+    # neo4j backend is enabled, real values are required (verified at connect).
+    neo4j_uri: str = "bolt://localhost:7687"
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = "neo4j"
     neo4j_database: str = "neo4j"
     neo4j_max_connection_pool_size: int = 50
 
@@ -179,6 +186,19 @@ class Settings(BaseSettings):
     # Vector search mode (Phase 6): "scan" (default; brute-force, all dialects),
     # "hnsw" (pgvector ANN pushdown), or "auto" (ANN on PostgreSQL, scan elsewhere).
     vector_search_mode: str = "scan"
+
+    # --- Deployment (Stage 14 deployment-readiness) -----------------------
+    # Create the schema on startup via Base.metadata.create_all. Intended for
+    # SQLite/free-tier deploys where Alembic cannot run (migration 0001 enables
+    # the pgvector extension). OFF by default; Postgres deploys use Alembic.
+    auto_create_schema: bool = False
+    # Idempotently seed demo data (users/memories) on startup for a portfolio
+    # demo. OFF by default; safe to re-run (skips users that already exist).
+    seed_demo_on_startup: bool = False
+
+    @property
+    def is_sqlite(self) -> bool:
+        return self.postgres_url.startswith("sqlite")
 
     # --- Derived helpers ---------------------------------------------------
     @property

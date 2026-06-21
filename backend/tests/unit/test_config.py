@@ -133,3 +133,43 @@ def test_development_allows_wildcard_cors(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", '["*"]')
     settings = Settings()  # type: ignore[call-arg]
     assert settings.cors_allowed_origins == ["*"]
+
+
+# --- Deployment: optional Redis/Neo4j + flags -----------------------------
+
+def test_minimal_env_boots_without_redis_or_neo4j(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A free-tier deploy provides only the database URL + JWT secret.
+    for key in ("REDIS_URL", "NEO4J_URI", "NEO4J_USERNAME", "NEO4J_PASSWORD"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("POSTGRES_URL", "sqlite+aiosqlite:///./demo.db")
+    monkeypatch.setenv("JWT_SECRET", "a-sufficiently-long-secret")
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.redis_url.startswith("redis://")     # placeholder default
+    assert settings.neo4j_uri.startswith("bolt://")      # placeholder default
+    assert settings.is_sqlite is True
+    assert settings.auto_create_schema is False
+    assert settings.seed_demo_on_startup is False
+
+
+def test_postgres_url_is_still_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key in ("POSTGRES_URL", "REDIS_URL", "NEO4J_URI"):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("JWT_SECRET", "a-sufficiently-long-secret")
+    with pytest.raises(ValidationError):
+        Settings()  # type: ignore[call-arg]
+
+
+def test_deployment_flags_can_be_enabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("AUTO_CREATE_SCHEMA", "true")
+    monkeypatch.setenv("SEED_DEMO_ON_STARTUP", "true")
+    settings = Settings()  # type: ignore[call-arg]
+    assert settings.auto_create_schema is True
+    assert settings.seed_demo_on_startup is True
+
+
+def test_is_sqlite_false_for_postgres(monkeypatch: pytest.MonkeyPatch) -> None:
+    for key, value in _BASE_ENV.items():
+        monkeypatch.setenv(key, value)
+    assert Settings().is_sqlite is False  # type: ignore[call-arg]  (_BASE_ENV uses postgres URL)

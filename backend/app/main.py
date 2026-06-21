@@ -83,11 +83,39 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Manage the application's startup and shutdown lifecycle."""
     settings: Settings = app.state.settings
 
-    # --- Startup: bring datastore connections online (fail fast) ----------
+    # --- Startup: bring datastore connections online ----------------------
     _logger.info("startup.begin", extra={"environment": settings.app_env})
     await postgres_manager.connect(settings)
-    await redis_manager.connect(settings)
-    await neo4j_manager.connect(settings)
+
+    # Optional schema bootstrap for SQLite / free-tier deploys (Alembic can't run
+    # on SQLite because migration 0001 enables the pgvector extension). Opt-in;
+    # Postgres deploys leave this off and use Alembic.
+    if settings.auto_create_schema:
+        # ``from ... import`` so we don't rebind the local name ``app`` (the
+        # lifespan parameter) to the top-level package.
+        from app.infrastructure.database import models as _models  # noqa: F401 - register tables
+        from app.infrastructure.database.base import Base
+
+        async with postgres_manager.engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        _logger.info("schema.created")
+
+    # Redis is lazy and optional: only used when caching/auth/rate-limiting are
+    # enabled. A connect failure is logged and ignored so a minimal deploy boots.
+    try:
+        await redis_manager.connect(settings)
+    except Exception:  # noqa: BLE001 — optional backend; degrade gracefully
+        _logger.warning("redis.connect_failed", exc_info=True)
+
+    # Neo4j is only connected when it is the active graph backend; the default
+    # in-memory backend needs no Neo4j. A failure is logged, not fatal.
+    if settings.graph_backend.lower() == "neo4j":
+        try:
+            await neo4j_manager.connect(settings)
+        except Exception:  # noqa: BLE001 — optional backend; degrade gracefully
+            _logger.warning("neo4j.connect_failed", exc_info=True)
+    else:
+        _logger.info("neo4j.skipped", extra={"graph_backend": settings.graph_backend})
 
     # --- Wire the event-driven embedding pipeline ------------------------
     embedding_service = EmbeddingService(
@@ -199,6 +227,20 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler.register(SummaryRefreshJob(uow_factory, summary_service), cron=settings.summary_cron)
         await scheduler.start()
     app.state.scheduler = scheduler
+
+    # --- Optional demo seeding (deployment-readiness) --------------------
+    # Runs after every event handler is registered, so seeded writes drive the
+    # real embedding/graph/consolidation pipeline. Idempotent; OFF by default.
+    if settings.seed_demo_on_startup:
+        from app.infrastructure.seed.demo_seed import seed_demo
+
+        result = await seed_demo(
+            lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+            in_process_dispatcher,
+            summary_generator=DeterministicSummaryGenerator(),
+        )
+        _logger.info("seed.complete", extra=result)
+
     _logger.info("startup.complete")
 
     try:

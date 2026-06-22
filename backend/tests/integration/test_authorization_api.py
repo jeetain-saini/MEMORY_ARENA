@@ -201,6 +201,10 @@ def test_every_protected_route_is_covered() -> None:
         # resolve validates ownership of both keep_id and archive_id).
         "/api/v1/memories/{memory_id}/restore",
         "/api/v1/memories/contradictions/resolve",
+        # Stage 17: intelligence engines authorize_owner on the path user_id.
+        "/api/v1/intelligence/promote/{user_id}",
+        "/api/v1/intelligence/forget/{user_id}",
+        "/api/v1/intelligence/cluster/{user_id}",
     }
     tested |= service_level
     uncovered = {

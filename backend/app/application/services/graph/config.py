@@ -35,11 +35,13 @@ DEFAULT_EXPANSION_EDGE_TYPES: tuple[GraphEdgeType, ...] = (
 # / SUPPORTS / USED_IN are intentionally absent: sync owns and re-derives them.
 DEFAULT_EXTERNALLY_MANAGED_EDGE_TYPES: frozenset[GraphEdgeType] = frozenset(
     {
-        GraphEdgeType.CONTRADICTS,   # consolidation (Stage 10 P2)
-        GraphEdgeType.SUPERSEDES,    # contradiction resolution (Stage 16)
-        GraphEdgeType.DEPENDS_ON,    # relationship inference (Stage 11 P B)
-        GraphEdgeType.DERIVED_FROM,  # relationship inference
-        GraphEdgeType.REINFORCES,    # relationship inference
+        GraphEdgeType.CONTRADICTS,    # consolidation (Stage 10 P2)
+        GraphEdgeType.SUPERSEDES,     # contradiction resolution (Stage 16)
+        GraphEdgeType.PROMOTED_FROM,  # episodic->semantic promotion (Stage 17)
+        GraphEdgeType.CLUSTER_MEMBER, # semantic clustering (Stage 17)
+        GraphEdgeType.DEPENDS_ON,     # relationship inference (Stage 11 P B)
+        GraphEdgeType.DERIVED_FROM,   # relationship inference
+        GraphEdgeType.REINFORCES,     # relationship inference
     }
 )
 

@@ -30,6 +30,9 @@ class RetrievalConfig:
     promotion_bonus: float = 0.15
     priority_weight: float = 0.10
     priority_cap: int = 5
+    # Stage 17 additive signals (default 0.0 -> backward compatible; opt-in tuning).
+    semantic_bonus: float = 0.0   # extra rank for semantic (vs episodic) memories
+    cluster_bonus: float = 0.0    # extra rank for memories that belong to a cluster
 
     # --- BM25 parameters --------------------------------------------------
     bm25_k1: float = 1.5

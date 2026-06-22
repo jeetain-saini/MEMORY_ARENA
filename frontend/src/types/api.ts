@@ -17,9 +17,22 @@ export const MEMORY_TYPES: MemoryType[] = [
   "experience",
 ];
 
-export type MemoryStatus = "active" | "archived" | "deleted";
+export type MemoryStatus =
+  | "active"
+  | "archived"
+  | "superseded"
+  | "forgotten"
+  | "deleted";
 
-export const MEMORY_STATUSES: MemoryStatus[] = ["active", "archived", "deleted"];
+export const MEMORY_STATUSES: MemoryStatus[] = [
+  "active",
+  "archived",
+  "superseded",
+  "forgotten",
+  "deleted",
+];
+
+export type MemoryCategory = "episodic" | "semantic";
 
 export type GraphEdgeType =
   | "related_to"
@@ -29,7 +42,9 @@ export type GraphEdgeType =
   | "derived_from"
   | "reinforces"
   | "contradicts"
-  | "supersedes";
+  | "supersedes"
+  | "promoted_from"
+  | "cluster_member";
 
 export type NodeType =
   | "memory"

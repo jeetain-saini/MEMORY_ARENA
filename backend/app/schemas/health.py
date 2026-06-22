@@ -34,6 +34,15 @@ class MemoryHealthResponseSchema(BaseModel):
     type_distribution: dict[str, int]
     average_importance: float
     average_confidence: float
+    forgotten_count: int
+    episodic_count: int
+    semantic_count: int
+    cluster_count: int
+    promoted_from_count: int
+    average_memory_age_days: float
+    retrieval_frequency_stats: dict[str, float]
+    importance_distribution: dict[str, int]
+    confidence_distribution: dict[str, int]
     notes: dict[str, str]
 
     @classmethod

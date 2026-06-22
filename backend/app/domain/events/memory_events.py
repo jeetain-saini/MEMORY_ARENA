@@ -54,6 +54,15 @@ class MemoryArchived(DomainEvent):
 
 
 @dataclass(frozen=True, kw_only=True)
+class MemoryForgotten(DomainEvent):
+    """The forgetting engine aged a memory out (status -> FORGOTTEN)."""
+
+    memory_id: UUID
+    user_id: UUID
+    reason: str | None = None
+
+
+@dataclass(frozen=True, kw_only=True)
 class MemoryDeleted(DomainEvent):
     memory_id: UUID
     user_id: UUID

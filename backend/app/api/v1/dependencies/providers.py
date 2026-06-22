@@ -62,6 +62,10 @@ from app.application.services.retrieval.config import RetrievalConfig
 from app.application.services.retrieval.hybrid_retriever import HybridRetriever
 from app.application.services.retrieval.keyword_retriever import KeywordRetriever
 from app.application.services.retrieval.reranker import SimpleCrossEncoderReranker
+from app.application.services.intelligence.clustering_engine import ClusteringEngine
+from app.application.services.intelligence.forgetting_engine import ForgettingEngine
+from app.application.services.intelligence.promotion_engine import PromotionEngine
+from app.application.services.intelligence.retrieval_tracker import UnitOfWorkRetrievalTracker
 from app.application.services.retrieval.retrieval_service import MemoryRetrievalService
 from app.application.services.retrieval.vector_retriever import VectorRetriever
 from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
@@ -274,7 +278,8 @@ def get_memory_retrieval_service(
     )
     keyword = KeywordRetriever(uow_factory, config)
     hybrid = HybridRetriever(vector, keyword, config)
-    return MemoryRetrievalService(hybrid, reranker, principal, metrics, clock)
+    tracker = UnitOfWorkRetrievalTracker(uow_factory)  # Stage 17: retrieval frequency
+    return MemoryRetrievalService(hybrid, reranker, principal, metrics, clock, tracker)
 
 
 def get_graph_config() -> GraphConfig:
@@ -295,6 +300,33 @@ def get_contradiction_resolution_service(
 ) -> ContradictionResolutionService:
     """Assemble the contradiction-resolution service for a request (Stage 16)."""
     return ContradictionResolutionService(uow, graph_repo, dispatcher, principal)
+
+
+def _intelligence_uow_factory() -> UnitOfWork:
+    return SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)
+
+
+def get_promotion_engine(
+    graph_repo: GraphRepository = Depends(get_graph_repository),
+    dispatcher: EventDispatcher = Depends(get_event_dispatcher),
+) -> PromotionEngine:
+    """Assemble the episodic->semantic promotion engine (Stage 17)."""
+    return PromotionEngine(_intelligence_uow_factory, graph_repo, dispatcher)
+
+
+def get_forgetting_engine(
+    graph_repo: GraphRepository = Depends(get_graph_repository),
+    dispatcher: EventDispatcher = Depends(get_event_dispatcher),
+) -> ForgettingEngine:
+    """Assemble the forgetting engine (Stage 17)."""
+    return ForgettingEngine(_intelligence_uow_factory, graph_repo, dispatcher)
+
+
+def get_clustering_engine(
+    graph_repo: GraphRepository = Depends(get_graph_repository),
+) -> ClusteringEngine:
+    """Assemble the semantic clustering engine (Stage 17)."""
+    return ClusteringEngine(_intelligence_uow_factory, graph_repo)
 
 
 def get_graph_traversal_service(

@@ -30,6 +30,8 @@ export const MEMORY_TYPE_COLORS: Record<MemoryType, string> = {
 export const STATUS_COLORS: Record<MemoryStatus, string> = {
   active: "bg-green-100 text-green-800 border-green-200",
   archived: "bg-gray-100 text-gray-700 border-gray-200",
+  superseded: "bg-purple-100 text-purple-800 border-purple-200",
+  forgotten: "bg-amber-100 text-amber-800 border-amber-200",
   deleted: "bg-red-100 text-red-800 border-red-200",
 };
 
@@ -50,6 +52,8 @@ export const EDGE_STYLES: Record<GraphEdgeType, EdgeStyle> = {
   reinforces: { color: "#14b8a6", label: "Reinforces", dashed: false, directed: false },
   contradicts: { color: "#ef4444", label: "Contradicts", dashed: true, directed: false },
   supersedes: { color: "#a855f7", label: "Supersedes", dashed: false, directed: true },
+  promoted_from: { color: "#ec4899", label: "Promoted from", dashed: false, directed: true },
+  cluster_member: { color: "#64748b", label: "Cluster", dashed: true, directed: false },
 };
 
 export const NODE_TYPE_COLORS: Record<NodeType, string> = {

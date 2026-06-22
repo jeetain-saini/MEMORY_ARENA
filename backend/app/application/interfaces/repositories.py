@@ -64,6 +64,14 @@ class MemoryRepository(ABC):
     async def list_for_analytics(self, user_id: UUID | None = None) -> list[Memory]:
         """Return all non-deleted memories (optionally for one user) for analytics."""
 
+    @abstractmethod
+    async def record_retrievals(self, memory_ids: list[UUID]) -> None:
+        """Bulk-increment retrieval_count + set last_retrieved_at (Stage 17).
+
+        Lightweight, fire-and-forget read-side signal; does not touch updated_at
+        or emit events. A no-op for an empty id list.
+        """
+
 
 class MemoryRelationRepository(ABC):
     """Persistence port for edges in the memory graph."""

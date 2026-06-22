@@ -21,6 +21,7 @@ from app.application.dto.memory_dto import (
     UpdateMemoryRequest,
 )
 from app.application.dto.resolution_dto import ContradictionResolutionResult
+from app.domain.value_objects.memory_category import MemoryCategory
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 
@@ -132,6 +133,8 @@ class MemoryResponseSchema(BaseModel):
     version: int
     is_promoted: bool
     priority: int
+    category: MemoryCategory | None = None
+    retrieval_count: int = 0
     created_at: datetime
     updated_at: datetime
 

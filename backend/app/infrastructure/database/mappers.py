@@ -17,6 +17,7 @@ from app.domain.entities.memory_score import MemoryScore
 from app.domain.entities.memory_summary import MemorySummary
 from app.domain.entities.memory_version import MemoryVersion
 from app.domain.entities.user import User
+from app.domain.value_objects.memory_category import MemoryCategory, default_category
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 from app.domain.value_objects.relation_type import RelationType
@@ -98,6 +99,9 @@ def memory_to_model(memory: Memory) -> MemoryModel:
         version=memory.version,
         is_promoted=memory.is_promoted,
         priority=memory.priority,
+        category=(memory.category or default_category(memory.memory_type)).value,
+        retrieval_count=memory.retrieval_count,
+        last_retrieved_at=memory.last_retrieved_at,
         meta=dict(memory.metadata),
         created_at=memory.created_at,
         updated_at=memory.updated_at,
@@ -113,6 +117,9 @@ def apply_memory_to_model(model: MemoryModel, memory: Memory) -> None:
     model.version = memory.version
     model.is_promoted = memory.is_promoted
     model.priority = memory.priority
+    model.category = (memory.category or default_category(memory.memory_type)).value
+    model.retrieval_count = memory.retrieval_count
+    model.last_retrieved_at = memory.last_retrieved_at
     model.meta = dict(memory.metadata)
     model.updated_at = memory.updated_at
 
@@ -129,6 +136,9 @@ def model_to_memory(model: MemoryModel) -> Memory:
         version=model.version,
         is_promoted=model.is_promoted,
         priority=model.priority,
+        category=MemoryCategory(model.category) if model.category else None,
+        retrieval_count=model.retrieval_count or 0,
+        last_retrieved_at=model.last_retrieved_at,
         created_at=model.created_at,
         updated_at=model.updated_at,
     )

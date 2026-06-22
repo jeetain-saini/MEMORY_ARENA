@@ -39,6 +39,16 @@ _SUMMARY_SCOPES: tuple[MemoryType, ...] = (
     MemoryType.EXPERIENCE,
 )
 
+def _bucket(values) -> dict[str, int]:  # type: ignore[no-untyped-def]
+    """Bucket [0,1] values into 5 ranges for a distribution histogram."""
+    labels = ["0.0-0.2", "0.2-0.4", "0.4-0.6", "0.6-0.8", "0.8-1.0"]
+    out = {lbl: 0 for lbl in labels}
+    for v in values:
+        idx = min(4, int(max(0.0, min(1.0, v)) * 5))
+        out[labels[idx]] += 1
+    return out
+
+
 _NOTES = {
     "retrieval_frequency": "not tracked; requires a retrieval counter (deferred to Stage 14)",
     "reinforcement_frequency": (
@@ -90,17 +100,24 @@ class MemoryHealthService:
         edges = await self._graph.count_edges(user_id)
         # Contradiction / supersession counts come from the tenant's subgraph
         # (per-user only; the global view skips per-type edge counts).
-        contradictions = superseded = 0
+        contradictions = superseded = promoted_from = 0
+        cluster_ids: set[str] = set()
         if user_id is not None:
             overview = await self._graph.get_subgraph(user_id)
-            contradictions = sum(
-                1 for e in overview.edges if e.edge_type is GraphEdgeType.CONTRADICTS
-            )
-            superseded = sum(
-                1 for e in overview.edges if e.edge_type is GraphEdgeType.SUPERSEDES
-            )
+            for e in overview.edges:
+                if e.edge_type is GraphEdgeType.CONTRADICTS:
+                    contradictions += 1
+                elif e.edge_type is GraphEdgeType.SUPERSEDES:
+                    superseded += 1
+                elif e.edge_type is GraphEdgeType.PROMOTED_FROM:
+                    promoted_from += 1
+                elif e.edge_type is GraphEdgeType.CLUSTER_MEMBER:
+                    cid = e.properties.get("cluster_id")
+                    if cid:
+                        cluster_ids.add(str(cid))
         result = self._aggregate(
-            memories, summaries, nodes, edges, contradictions, superseded, user_id, now
+            memories, summaries, nodes, edges, contradictions, superseded,
+            promoted_from, len(cluster_ids), user_id, now,
         )
 
         if use_cache:
@@ -119,13 +136,20 @@ class MemoryHealthService:
         graph_edges: int,
         contradiction_count: int,
         superseded_count: int,
+        promoted_from_count: int,
+        cluster_count: int,
         user_id: UUID | None,
         now: datetime,
     ) -> MemoryHealth:
+        from app.domain.value_objects.memory_category import MemoryCategory
+
         total = len(memories)
         active = [m for m in memories if m.status is MemoryStatus.ACTIVE]
         archived = sum(1 for m in memories if m.status is MemoryStatus.ARCHIVED)
+        forgotten = sum(1 for m in memories if m.status is MemoryStatus.FORGOTTEN)
         promoted = sum(1 for m in memories if m.is_promoted)
+        episodic = sum(1 for m in memories if m.category is MemoryCategory.EPISODIC)
+        semantic = sum(1 for m in memories if m.category is MemoryCategory.SEMANTIC)
 
         scores = [m.total_score for m in memories]
         average_score = round(sum(scores) / len(scores), 4) if scores else 0.0
@@ -156,6 +180,18 @@ class MemoryHealthService:
 
         density = round(graph_edges / graph_nodes, 4) if graph_nodes else 0.0
 
+        # Stage 17: age, retrieval-frequency stats, importance/confidence buckets.
+        ages = [(now - ts).total_seconds() / 86400.0 for ts in created_at]
+        avg_age = round(sum(ages) / len(ages), 4) if ages else 0.0
+        rcounts = [m.retrieval_count for m in memories]
+        retrieval_stats = {
+            "total": float(sum(rcounts)),
+            "average": round(sum(rcounts) / len(rcounts), 4) if rcounts else 0.0,
+            "max": float(max(rcounts)) if rcounts else 0.0,
+        }
+        importance_dist = _bucket(m.score.importance for m in memories)
+        confidence_dist = _bucket(m.score.confidence for m in memories)
+
         expected, present, coverage = self._summary_coverage(active, summaries, user_id)
 
         return MemoryHealth(
@@ -181,6 +217,15 @@ class MemoryHealthService:
             type_distribution=type_distribution,
             average_importance=avg_importance,
             average_confidence=avg_confidence,
+            forgotten_count=forgotten,
+            episodic_count=episodic,
+            semantic_count=semantic,
+            cluster_count=cluster_count,
+            promoted_from_count=promoted_from_count,
+            average_memory_age_days=avg_age,
+            retrieval_frequency_stats=retrieval_stats,
+            importance_distribution=importance_dist,
+            confidence_distribution=confidence_dist,
             notes=dict(_NOTES),
         )
 

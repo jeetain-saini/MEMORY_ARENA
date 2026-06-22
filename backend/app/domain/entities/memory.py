@@ -24,11 +24,14 @@ from app.domain.events.memory_events import (
     MemoryCreated,
     MemoryDecayed,
     MemoryDeleted,
+    MemoryForgotten,
     MemoryPromoted,
     MemoryReinforced,
+    MemorySuperseded,
     MemoryUpdated,
 )
 from app.domain.exceptions.errors import InvalidMemoryStateError, MemoryValidationError
+from app.domain.value_objects.memory_category import MemoryCategory, default_category
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 
@@ -51,6 +54,11 @@ class Memory:
     version: int = 1
     is_promoted: bool = False
     priority: int = 0
+    # Stage 17: episodic vs semantic. None -> derive from memory_type at init.
+    category: MemoryCategory | None = None
+    # Stage 17: retrieval-frequency tracking (drives importance + forgetting).
+    retrieval_count: int = 0
+    last_retrieved_at: datetime | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 
@@ -60,6 +68,8 @@ class Memory:
     def __post_init__(self) -> None:
         if not self.content or not self.content.strip():
             raise MemoryValidationError("Memory content must not be empty.")
+        if self.category is None:
+            self.category = default_category(self.memory_type)
 
     # -- Factory ------------------------------------------------------------
     @classmethod
@@ -176,8 +186,36 @@ class Memory:
         self._record(MemoryArchived(memory_id=self.id, user_id=self.user_id))
 
     def restore(self) -> None:
-        """Bring an ARCHIVED memory back to ACTIVE."""
+        """Bring an ARCHIVED/SUPERSEDED/FORGOTTEN memory back to ACTIVE."""
         self._transition_to(MemoryStatus.ACTIVE)
+
+    def supersede(self, *, superseded_by_id: UUID) -> None:
+        """Mark this memory as replaced by a newer one (status -> SUPERSEDED)."""
+        self._transition_to(MemoryStatus.SUPERSEDED)
+        self._record(
+            MemorySuperseded(
+                memory_id=self.id, superseded_by_id=superseded_by_id, user_id=self.user_id
+            )
+        )
+
+    def forget(self, *, reason: str | None = None) -> None:
+        """Age the memory out (status -> FORGOTTEN); hidden from retrieval, kept."""
+        self._transition_to(MemoryStatus.FORGOTTEN)
+        self._record(MemoryForgotten(memory_id=self.id, user_id=self.user_id, reason=reason))
+
+    def record_retrieval(self, *, now: datetime | None = None) -> None:
+        """Note that retrieval returned this memory (lightweight; no event/version).
+
+        Bumps ``retrieval_count`` and ``last_retrieved_at`` only. Deliberately
+        does not touch ``updated_at`` or emit an event — it is a read-side signal
+        for importance/forgetting, not a content change.
+        """
+        self.retrieval_count += 1
+        self.last_retrieved_at = now or _utcnow()
+
+    def reclassify(self, category: MemoryCategory) -> None:
+        """Override the memory's category (e.g. episodic -> semantic on promotion)."""
+        self.category = category
 
     def delete(self) -> None:
         """Tombstone the memory (terminal)."""

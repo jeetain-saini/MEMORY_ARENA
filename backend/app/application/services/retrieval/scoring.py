@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from app.application.dto.retrieval_dto import RetrievalFilters
 from app.application.services.retrieval.config import RetrievalConfig
 from app.domain.entities.memory import Memory
+from app.domain.value_objects.memory_category import MemoryCategory
 from app.domain.value_objects.memory_status import MemoryStatus
 
 
@@ -57,6 +58,12 @@ def memory_boost_score(memory: Memory, config: RetrievalConfig) -> float:
     boost = config.promotion_bonus if memory.is_promoted else 0.0
     if config.priority_cap > 0:
         boost += config.priority_weight * min(memory.priority, config.priority_cap) / config.priority_cap
+
+    # Stage 17 additive signals (config-gated; default 0.0 -> backward compatible).
+    if getattr(memory, "category", None) is MemoryCategory.SEMANTIC:
+        boost += config.semantic_bonus
+    if memory.metadata.get("cluster_id"):
+        boost += config.cluster_bonus
 
     return clamp01(base + boost)
 

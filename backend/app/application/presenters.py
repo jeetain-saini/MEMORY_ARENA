@@ -21,6 +21,8 @@ def memory_to_response(memory: Memory) -> CreateMemoryResponse:
         version=memory.version,
         is_promoted=memory.is_promoted,
         priority=memory.priority,
+        category=memory.category,
+        retrieval_count=memory.retrieval_count,
         created_at=memory.created_at,
         updated_at=memory.updated_at,
     )

@@ -9,8 +9,9 @@ mapper bridges it to the domain's ``metadata``. Soft-deletable.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.infrastructure.database.base import Base, JSONType, SoftDeleteMixin, TimestampMixin
@@ -37,6 +38,12 @@ class MemoryModel(TimestampMixin, SoftDeleteMixin, Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     is_promoted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Stage 17: episodic vs semantic + retrieval-frequency tracking.
+    category: Mapped[str] = mapped_column(String(16), nullable=False, default="semantic")
+    retrieval_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_retrieved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     meta: Mapped[dict] = mapped_column(JSONType, nullable=False, default=dict)
 
     # One-to-one score; loaded eagerly by repositories when needed.

@@ -13,6 +13,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
+from app.domain.value_objects.memory_category import MemoryCategory
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 
@@ -45,6 +46,9 @@ class CreateMemoryResponse:
     created_at: datetime
     updated_at: datetime
     priority: int = 0
+    # Stage 17: episodic/semantic category + retrieval-frequency tracking.
+    category: MemoryCategory | None = None
+    retrieval_count: int = 0
 
 
 @dataclass(frozen=True)

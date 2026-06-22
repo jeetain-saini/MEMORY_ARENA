@@ -35,6 +35,9 @@ class GraphEdgeType(str, Enum):
     CONTRADICTS = "contradicts"
     # Written when a contradiction is resolved: keep --SUPERSEDES--> archived.
     SUPERSEDES = "supersedes"
+    # Stage 17: semantic --PROMOTED_FROM--> episodic source; cluster membership.
+    PROMOTED_FROM = "promoted_from"
+    CLUSTER_MEMBER = "cluster_member"
 
 
 @dataclass(frozen=True)

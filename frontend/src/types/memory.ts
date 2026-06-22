@@ -1,4 +1,4 @@
-import type { MemoryStatus, MemoryType } from "@/types/api";
+import type { MemoryCategory, MemoryStatus, MemoryType } from "@/types/api";
 
 export interface Memory {
   id: string;
@@ -10,6 +10,8 @@ export interface Memory {
   version: number;
   is_promoted: boolean;
   priority: number;
+  category?: MemoryCategory | null;
+  retrieval_count?: number;
   created_at: string;
   updated_at: string;
 }

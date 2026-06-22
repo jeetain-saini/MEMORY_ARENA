@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -116,6 +116,18 @@ class MemoryRepositoryImpl(MemoryRepository):
             stmt = stmt.where(MemoryModel.user_id == user_id)
         result = await self._session.scalars(stmt)
         return [model_to_memory(m) for m in result.unique().all()]
+
+    async def record_retrievals(self, memory_ids: list[uuid.UUID]) -> None:
+        if not memory_ids:
+            return
+        await self._session.execute(
+            update(MemoryModel)
+            .where(MemoryModel.id.in_(memory_ids))
+            .values(
+                retrieval_count=MemoryModel.retrieval_count + 1,
+                last_retrieved_at=utcnow(),
+            )
+        )
 
     # -- internals ----------------------------------------------------------
     async def _load(self, memory_id: uuid.UUID, *, include_deleted: bool) -> MemoryModel | None:

@@ -50,4 +50,15 @@ class MemoryHealth:
     average_importance: float = 0.0
     average_confidence: float = 0.0
 
+    # self-evolution composition (Stage 17)
+    forgotten_count: int = 0       # memories in FORGOTTEN state
+    episodic_count: int = 0
+    semantic_count: int = 0
+    cluster_count: int = 0         # distinct CLUSTER_MEMBER cluster ids
+    promoted_from_count: int = 0   # PROMOTED_FROM edges (episodic->semantic)
+    average_memory_age_days: float = 0.0
+    retrieval_frequency_stats: dict[str, float] = field(default_factory=dict)  # total/avg/max
+    importance_distribution: dict[str, int] = field(default_factory=dict)
+    confidence_distribution: dict[str, int] = field(default_factory=dict)
+
     notes: dict[str, str] = field(default_factory=dict)

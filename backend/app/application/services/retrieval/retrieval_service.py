@@ -13,6 +13,7 @@ from app.application.dto.retrieval_dto import MemorySearchQuery, RetrievalResult
 from app.application.interfaces.clock import Clock
 from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.reranker import Reranker
+from app.application.interfaces.retrieval_tracker import RetrievalTracker
 from app.application.services.authorization import resolve_scope
 from app.application.services.retrieval.hybrid_retriever import HybridRetriever
 
@@ -25,12 +26,14 @@ class MemoryRetrievalService:
         principal: AuthPrincipal | None = None,
         metrics: MetricsSink | None = None,
         clock: Clock | None = None,
+        tracker: "RetrievalTracker | None" = None,
     ) -> None:
         self._hybrid = hybrid
         self._reranker = reranker
         self._principal = principal
         self._metrics = metrics
         self._clock = clock
+        self._tracker = tracker
 
     async def search(self, query: MemorySearchQuery) -> RetrievalResult:
         resolve_scope(self._principal, query.user_id)
@@ -41,6 +44,9 @@ class MemoryRetrievalService:
         top = reranked[: query.top_k]
         if timed:
             self._metrics.observe("retrieval.latency_ms", (self._clock.now() - start) * 1000.0)
+        # Stage 17: record retrieval frequency (additive, failure-isolated).
+        if self._tracker is not None and top:
+            await self._tracker.record([r.memory_id for r in top])
         return RetrievalResult(
             query=query.query, user_id=query.user_id, results=top, count=len(top)
         )

@@ -16,6 +16,7 @@ from app.api.v1.routes import (
     graph,
     health,
     ingest,
+    intelligence,
     memories,
     observability,
     query,
@@ -36,3 +37,4 @@ api_router.include_router(ingest.router)
 api_router.include_router(query.router)
 api_router.include_router(summaries.router)
 api_router.include_router(observability.router)
+api_router.include_router(intelligence.router)

@@ -24,7 +24,7 @@ from app.infrastructure.llm.graphs.sequential_consolidation_engine import (
     SequentialConsolidationEngine,
 )
 from app.infrastructure.llm.graphs.sequential_engine import SequentialExtractionEngine
-from app.infrastructure.llm.providers.factory import build_llm_provider
+from app.infrastructure.llm.providers.factory import build_extraction_llm_provider
 
 if TYPE_CHECKING:
     from app.application.interfaces.agent_runtime import AgentRuntime
@@ -36,8 +36,10 @@ if TYPE_CHECKING:
 
 @lru_cache(maxsize=1)
 def build_workflow_engine() -> WorkflowEngine:
+    # Extraction uses the dedicated extraction provider (deterministic by
+    # default), decoupled from the answer-generation provider.
     settings = get_settings()
-    provider = build_llm_provider()
+    provider = build_extraction_llm_provider()
     if settings.workflow_engine.lower() == "langgraph":
         from app.infrastructure.llm.graphs.extraction_graph import LangGraphExtractionEngine
 
@@ -47,8 +49,11 @@ def build_workflow_engine() -> WorkflowEngine:
 
 @lru_cache(maxsize=1)
 def build_consolidation_engine() -> ConsolidationEngine:
+    # Consolidation is part of the memory pipeline (not answer generation), so it
+    # also uses the extraction provider. The default sequential engine is lexical
+    # (Jaccard) and makes no LLM calls, so behavior is unchanged.
     settings = get_settings()
-    provider = build_llm_provider()
+    provider = build_extraction_llm_provider()
     if settings.consolidation_engine.lower() == "langgraph":
         from app.infrastructure.llm.graphs.consolidation_graph import LangGraphConsolidationEngine
 

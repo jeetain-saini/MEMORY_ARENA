@@ -81,6 +81,11 @@ class Settings(BaseSettings):
     # LLM_MODEL to a model id that provider serves.
     llm_provider: str = "deterministic"
     llm_model: str = "gpt-4o-mini"
+    # Provider for MEMORY EXTRACTION (ingestion + conversational capture),
+    # independent of answer generation. Defaults to "deterministic" (local,
+    # rule-based, free) so capture keeps working when the answer provider (e.g.
+    # NVIDIA) is rate-limited. Accepts the same values as llm_provider.
+    extraction_llm_provider: str = "deterministic"
     # Extraction workflow engine: "sequential" (offline default, no LangGraph)
     # or "langgraph" (production; requires the langgraph package).
     workflow_engine: str = "sequential"

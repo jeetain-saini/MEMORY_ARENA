@@ -125,6 +125,26 @@ class MemoryIntelligenceService:
         await self._dispatcher.dispatch(memory.pull_events())
         return memory_to_response(updated)
 
+    # -- restore -----------------------------------------------------------
+    async def restore_memory(
+        self,
+        memory_id: UUID,
+        *,
+        user_id: UUID | None = None,
+    ) -> CreateMemoryResponse:
+        """Bring an ARCHIVED memory back to ACTIVE.
+
+        A status transition, not a content change, so existing version snapshots
+        (the audit history) are preserved. Raises if the memory is not ARCHIVED.
+        """
+        async with self._uow as uow:
+            memory = await self._require(uow, memory_id, user_id)
+            memory.restore()  # ARCHIVED -> ACTIVE (raises on illegal transition)
+            updated = await uow.memories.update(memory)
+            await uow.commit()
+        await self._dispatcher.dispatch(memory.pull_events())
+        return memory_to_response(updated)
+
     # -- internals ---------------------------------------------------------
     async def _require(self, uow: UnitOfWork, memory_id: UUID, user_id: UUID | None) -> Memory:
         memory = await uow.memories.get_by_id(memory_id)

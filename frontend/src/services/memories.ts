@@ -1,6 +1,13 @@
 import { apiRequest } from "@/lib/api-client";
 import type { Memory, MemorySearchRequest } from "@/types/memory";
 
+export interface ContradictionResolution {
+  kept: Memory;
+  archived: Memory;
+  superseded_edge: boolean;
+  contradiction_preserved: boolean;
+}
+
 export function listUserMemories(
   userId: string,
   params: { limit?: number; offset?: number } = {},
@@ -50,5 +57,34 @@ export function deleteMemory(
   return apiRequest(`/memories/${memoryId}`, {
     method: "DELETE",
     query: { user_id: userId },
+  });
+}
+
+export function updateMemory(
+  memoryId: string,
+  userId: string,
+  content: string,
+): Promise<Memory> {
+  return apiRequest<Memory>(`/memories/${memoryId}`, {
+    method: "PUT",
+    body: { user_id: userId, content, reason: "edited via dashboard" },
+  });
+}
+
+export function restoreMemory(memoryId: string, userId: string): Promise<Memory> {
+  return apiRequest<Memory>(`/memories/${memoryId}/restore`, {
+    method: "POST",
+    query: { user_id: userId },
+  });
+}
+
+export function resolveContradiction(
+  userId: string,
+  keepId: string,
+  archiveId: string,
+): Promise<ContradictionResolution> {
+  return apiRequest<ContradictionResolution>("/memories/contradictions/resolve", {
+    method: "POST",
+    body: { user_id: userId, keep_id: keepId, archive_id: archiveId },
   });
 }

@@ -11,7 +11,13 @@ from __future__ import annotations
 from collections import deque
 from uuid import UUID
 
-from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath
+from app.application.dto.graph_dto import (
+    GraphEdge,
+    GraphEdgeType,
+    GraphNode,
+    GraphOverview,
+    GraphPath,
+)
 from app.application.interfaces.graph_repository import GraphRepository
 
 
@@ -111,6 +117,15 @@ class InMemoryGraphRepository(GraphRepository):
         if source_id in self._nodes:
             dfs(source_id, [source_id], [])
         return paths
+
+    # --- overview ---------------------------------------------------------
+    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
+        ids = self._user_node_ids(user_id)
+        nodes = [self._nodes[i] for i in ids]
+        edges = [
+            e for e in self._edges.values() if e.source_id in ids and e.target_id in ids
+        ]
+        return GraphOverview(nodes=nodes, edges=edges)
 
     # --- counts -----------------------------------------------------------
     async def count_nodes(self, user_id: UUID | None = None) -> int:

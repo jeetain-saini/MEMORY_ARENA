@@ -49,6 +49,7 @@ export const EDGE_STYLES: Record<GraphEdgeType, EdgeStyle> = {
   derived_from: { color: "#8b5cf6", label: "Derived from", dashed: false, directed: true },
   reinforces: { color: "#14b8a6", label: "Reinforces", dashed: false, directed: false },
   contradicts: { color: "#ef4444", label: "Contradicts", dashed: true, directed: false },
+  supersedes: { color: "#a855f7", label: "Supersedes", dashed: false, directed: true },
 };
 
 export const NODE_TYPE_COLORS: Record<NodeType, string> = {

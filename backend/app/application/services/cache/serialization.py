@@ -58,6 +58,11 @@ def dump_health(value: MemoryHealth) -> str:
         "summary_scopes_expected": value.summary_scopes_expected,
         "summary_scopes_present": value.summary_scopes_present,
         "summary_coverage": value.summary_coverage,
+        "contradiction_count": value.contradiction_count,
+        "superseded_count": value.superseded_count,
+        "type_distribution": value.type_distribution,
+        "average_importance": value.average_importance,
+        "average_confidence": value.average_confidence,
         "notes": value.notes,
     }
     return json.dumps(payload)
@@ -84,5 +89,10 @@ def load_health(raw: str) -> MemoryHealth:
         summary_scopes_expected=d["summary_scopes_expected"],
         summary_scopes_present=d["summary_scopes_present"],
         summary_coverage=d["summary_coverage"],
+        contradiction_count=d.get("contradiction_count", 0),
+        superseded_count=d.get("superseded_count", 0),
+        type_distribution=d.get("type_distribution", {}),
+        average_importance=d.get("average_importance", 0.0),
+        average_confidence=d.get("average_confidence", 0.0),
         notes=d["notes"],
     )

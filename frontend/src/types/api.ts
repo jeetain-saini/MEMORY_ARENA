@@ -28,7 +28,8 @@ export type GraphEdgeType =
   | "depends_on"
   | "derived_from"
   | "reinforces"
-  | "contradicts";
+  | "contradicts"
+  | "supersedes";
 
 export type NodeType =
   | "memory"

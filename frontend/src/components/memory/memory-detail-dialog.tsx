@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Archive, ArrowUpRight, Share2, Star, Trash2, Zap } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Archive, ArrowUpRight, Pencil, RotateCcw, Share2, Star, Trash2, Zap } from "lucide-react";
 
 import { MemoryTypeBadge } from "@/components/shared/memory-type-badge";
 import { ScoreBar } from "@/components/shared/score-bar";
@@ -15,7 +16,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Separator } from "@/components/ui/separator";
-import { useMemoryActions } from "@/hooks/use-memory-actions";
+import { Textarea } from "@/components/ui/textarea";
+import { useMemoryActions, useUpdateMemory } from "@/hooks/use-memory-actions";
 import { formatDateTime } from "@/lib/utils";
 import type { Memory } from "@/types/memory";
 
@@ -27,8 +29,15 @@ interface Props {
 
 export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
   const actions = useMemoryActions(userId);
+  const update = useUpdateMemory(userId);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  useEffect(() => {
+    setEditing(false);
+    setDraft(memory?.content ?? "");
+  }, [memory]);
   const open = memory !== null;
-  const busy = actions.isPending;
+  const busy = actions.isPending || update.isPending;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -45,7 +54,35 @@ export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
               <DialogDescription className="font-mono text-xs">{memory.id}</DialogDescription>
             </DialogHeader>
 
-            <p className="text-sm leading-relaxed">{memory.content}</p>
+            {editing ? (
+              <div className="space-y-2">
+                <Textarea
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  rows={4}
+                  className="text-sm"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    disabled={busy || !draft.trim() || draft === memory.content}
+                    onClick={() =>
+                      update.mutate(
+                        { memoryId: memory.id, content: draft.trim() },
+                        { onSuccess: () => setEditing(false) },
+                      )
+                    }
+                  >
+                    Save
+                  </Button>
+                  <Button size="sm" variant="ghost" disabled={busy} onClick={() => setEditing(false)}>
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm leading-relaxed">{memory.content}</p>
+            )}
 
             <div className="flex flex-wrap items-center gap-2">
               <MemoryTypeBadge type={memory.memory_type} />
@@ -68,6 +105,17 @@ export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
                 size="sm"
                 variant="secondary"
                 disabled={busy}
+                onClick={() => {
+                  setDraft(memory.content);
+                  setEditing(true);
+                }}
+              >
+                <Pencil className="h-4 w-4" /> Edit
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                disabled={busy}
                 onClick={() => actions.mutate({ action: "reinforce", memoryId: memory.id })}
               >
                 <Zap className="h-4 w-4" /> Reinforce
@@ -80,14 +128,25 @@ export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
               >
                 <Star className="h-4 w-4" /> Promote
               </Button>
-              <Button
-                size="sm"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => actions.mutate({ action: "archive", memoryId: memory.id })}
-              >
-                <Archive className="h-4 w-4" /> Archive
-              </Button>
+              {memory.status === "archived" ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => actions.mutate({ action: "restore", memoryId: memory.id })}
+                >
+                  <RotateCcw className="h-4 w-4" /> Restore
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busy}
+                  onClick={() => actions.mutate({ action: "archive", memoryId: memory.id })}
+                >
+                  <Archive className="h-4 w-4" /> Archive
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="destructive"

@@ -20,6 +20,7 @@ from app.application.dto.memory_dto import (
     MemorySearchRequest,
     UpdateMemoryRequest,
 )
+from app.application.dto.resolution_dto import ContradictionResolutionResult
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 
@@ -137,3 +138,26 @@ class MemoryResponseSchema(BaseModel):
     @classmethod
     def from_dto(cls, dto: CreateMemoryResponse) -> "MemoryResponseSchema":
         return cls.model_validate(dto)
+
+
+# --- Contradiction resolution (Stage 16) -----------------------------------
+class ResolveContradictionRequestSchema(BaseModel):
+    user_id: UUID
+    keep_id: UUID = Field(description="The authoritative memory to keep")
+    archive_id: UUID = Field(description="The obsolete memory to archive")
+
+
+class ContradictionResolutionResponseSchema(BaseModel):
+    kept: MemoryResponseSchema
+    archived: MemoryResponseSchema
+    superseded_edge: bool
+    contradiction_preserved: bool
+
+    @classmethod
+    def from_dto(cls, dto: "ContradictionResolutionResult") -> "ContradictionResolutionResponseSchema":
+        return cls(
+            kept=MemoryResponseSchema.from_dto(dto.kept),
+            archived=MemoryResponseSchema.from_dto(dto.archived),
+            superseded_edge=dto.superseded_edge,
+            contradiction_preserved=dto.contradiction_preserved,
+        )

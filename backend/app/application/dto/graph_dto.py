@@ -33,6 +33,8 @@ class GraphEdgeType(str, Enum):
     DERIVED_FROM = "derived_from"
     REINFORCES = "reinforces"
     CONTRADICTS = "contradicts"
+    # Written when a contradiction is resolved: keep --SUPERSEDES--> archived.
+    SUPERSEDES = "supersedes"
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,14 @@ class GraphPath:
 class GraphTraversalResult:
     root_id: str
     depth: int
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+
+
+@dataclass(frozen=True)
+class GraphOverview:
+    """A tenant's full graph: every node plus the edges among them."""
+
     nodes: list[GraphNode]
     edges: list[GraphEdge]
 

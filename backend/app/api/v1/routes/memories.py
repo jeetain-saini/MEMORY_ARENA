@@ -15,10 +15,14 @@ from uuid import UUID
 from fastapi import APIRouter, Query, status
 
 from app.api.v1.dependencies.providers import (
+    ContradictionResolutionServiceDep,
     MemoryAnalyticsServiceDep,
     MemoryHealthServiceDep,
     MemoryIntelligenceServiceDep,
     MemoryServiceDep,
+)
+from app.application.services.contradiction_resolution_service import (
+    ContradictionResolutionService,
 )
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
@@ -28,9 +32,11 @@ from app.core.logging import get_request_id
 from app.schemas.analytics import AnalyticsResponseSchema
 from app.schemas.health import MemoryHealthResponseSchema
 from app.schemas.memory import (
+    ContradictionResolutionResponseSchema,
     CreateMemoryRequestSchema,
     MemoryResponseSchema,
     MemorySearchRequestSchema,
+    ResolveContradictionRequestSchema,
     UpdateMemoryRequestSchema,
 )
 from app.schemas.responses import APIResponse
@@ -67,6 +73,21 @@ async def search_memories(
 ) -> APIResponse[list[MemoryResponseSchema]]:
     results = await service.search(payload.to_dto())
     return _ok([MemoryResponseSchema.from_dto(r) for r in results])
+
+
+@router.post(
+    "/contradictions/resolve",
+    response_model=APIResponse[ContradictionResolutionResponseSchema],
+    summary="Resolve a contradiction: keep one memory, archive the obsolete one",
+)
+async def resolve_contradiction(
+    payload: ResolveContradictionRequestSchema,
+    service: ContradictionResolutionService = ContradictionResolutionServiceDep,
+) -> APIResponse[ContradictionResolutionResponseSchema]:
+    result = await service.resolve(
+        keep_id=payload.keep_id, archive_id=payload.archive_id, user_id=payload.user_id
+    )
+    return _ok(ContradictionResolutionResponseSchema.from_dto(result))
 
 
 @router.get(
@@ -193,4 +214,18 @@ async def archive_memory(
     force: bool = Query(default=False, description="Archive even if criteria are not met"),
 ) -> APIResponse[MemoryResponseSchema]:
     result = await service.archive_memory(memory_id, user_id=user_id, force=force)
+    return _ok(MemoryResponseSchema.from_dto(result))
+
+
+@router.post(
+    "/{memory_id}/restore",
+    response_model=APIResponse[MemoryResponseSchema],
+    summary="Restore an archived memory to ACTIVE",
+)
+async def restore_memory(
+    memory_id: UUID,
+    service: MemoryIntelligenceService = MemoryIntelligenceServiceDep,
+    user_id: UUID = Query(..., description="Owner of the memory"),
+) -> APIResponse[MemoryResponseSchema]:
+    result = await service.restore_memory(memory_id, user_id=user_id)
     return _ok(MemoryResponseSchema.from_dto(result))

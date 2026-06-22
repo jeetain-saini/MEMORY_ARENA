@@ -32,6 +32,7 @@ from app.schemas.graph import (
     GraphEdgeSchema,
     GraphMemoryViewSchema,
     GraphNodeSchema,
+    GraphOverviewSchema,
     GraphSearchRequestSchema,
     GraphTraversalResultSchema,
     GraphTraverseRequestSchema,
@@ -101,6 +102,25 @@ async def graph_memory(
         edges=[GraphEdgeSchema.from_dto(e) for e in edges],
     )
     return APIResponse(data=view, request_id=get_request_id())
+
+
+@router.get(
+    "/overview/{user_id}",
+    response_model=APIResponse[GraphOverviewSchema],
+    summary="A tenant's full graph (nodes + RELATED_TO/CONTRADICTS/SUPERSEDES edges)",
+)
+async def graph_overview(
+    user_id: UUID,
+    repository: GraphRepository = GraphRepositoryDep,
+    principal: AuthPrincipal | None = CurrentPrincipalDep,
+) -> APIResponse[GraphOverviewSchema]:
+    # A caller may only view their own graph (no-op when auth is disabled).
+    if principal is not None:
+        authorize_owner(principal, user_id)
+    overview = await repository.get_subgraph(user_id)
+    return APIResponse(
+        data=GraphOverviewSchema.from_dto(user_id, overview), request_id=get_request_id()
+    )
 
 
 @router.post(

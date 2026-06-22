@@ -43,4 +43,11 @@ class MemoryHealth:
     summary_scopes_present: int    # of those, scopes with a current summary
     summary_coverage: float        # present / expected (1.0 when nothing expected)
 
+    # contradiction / supersession + composition (Stage 16)
+    contradiction_count: int = 0   # CONTRADICTS edges in the tenant's graph
+    superseded_count: int = 0      # SUPERSEDES edges (resolved contradictions)
+    type_distribution: dict[str, int] = field(default_factory=dict)  # by memory_type
+    average_importance: float = 0.0
+    average_confidence: float = 0.0
+
     notes: dict[str, str] = field(default_factory=dict)

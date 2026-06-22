@@ -20,6 +20,7 @@ from uuid import UUID
 from app.application.dto.auth_dto import AuthPrincipal
 from app.application.dto.health_dto import MemoryHealth
 from app.application.interfaces.cache_provider import CacheProvider
+from app.application.dto.graph_dto import GraphEdgeType
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.unit_of_work import UnitOfWork
@@ -87,7 +88,20 @@ class MemoryHealthService:
             summaries = await uow.summaries.list_for_user(user_id) if user_id is not None else []
         nodes = await self._graph.count_nodes(user_id)
         edges = await self._graph.count_edges(user_id)
-        result = self._aggregate(memories, summaries, nodes, edges, user_id, now)
+        # Contradiction / supersession counts come from the tenant's subgraph
+        # (per-user only; the global view skips per-type edge counts).
+        contradictions = superseded = 0
+        if user_id is not None:
+            overview = await self._graph.get_subgraph(user_id)
+            contradictions = sum(
+                1 for e in overview.edges if e.edge_type is GraphEdgeType.CONTRADICTS
+            )
+            superseded = sum(
+                1 for e in overview.edges if e.edge_type is GraphEdgeType.SUPERSEDES
+            )
+        result = self._aggregate(
+            memories, summaries, nodes, edges, contradictions, superseded, user_id, now
+        )
 
         if use_cache:
             await self._cache.set(key, dump_health(result), ttl_seconds=self._ttl)
@@ -103,6 +117,8 @@ class MemoryHealthService:
         summaries: list[MemorySummary],
         graph_nodes: int,
         graph_edges: int,
+        contradiction_count: int,
+        superseded_count: int,
         user_id: UUID | None,
         now: datetime,
     ) -> MemoryHealth:
@@ -115,6 +131,16 @@ class MemoryHealthService:
         average_score = round(sum(scores) / len(scores), 4) if scores else 0.0
         freqs = [m.score.frequency for m in active]
         avg_reinforcement = round(sum(freqs) / len(freqs), 4) if freqs else 0.0
+
+        # composition + quality (Stage 16)
+        type_distribution: dict[str, int] = {}
+        for m in memories:
+            key = m.memory_type.value
+            type_distribution[key] = type_distribution.get(key, 0) + 1
+        importances = [m.score.importance for m in memories]
+        confidences = [m.score.confidence for m in memories]
+        avg_importance = round(sum(importances) / len(importances), 4) if importances else 0.0
+        avg_confidence = round(sum(confidences) / len(confidences), 4) if confidences else 0.0
 
         cutoff_7 = now - timedelta(days=7)
         cutoff_30 = now - timedelta(days=30)
@@ -150,6 +176,11 @@ class MemoryHealthService:
             summary_scopes_expected=expected,
             summary_scopes_present=present,
             summary_coverage=coverage,
+            contradiction_count=contradiction_count,
+            superseded_count=superseded_count,
+            type_distribution=type_distribution,
+            average_importance=avg_importance,
+            average_confidence=avg_confidence,
             notes=dict(_NOTES),
         )
 

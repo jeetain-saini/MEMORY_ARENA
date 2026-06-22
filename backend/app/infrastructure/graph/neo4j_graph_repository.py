@@ -13,7 +13,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath, NodeType
+from app.application.dto.graph_dto import (
+    GraphEdge,
+    GraphEdgeType,
+    GraphNode,
+    GraphOverview,
+    GraphPath,
+    NodeType,
+)
 from app.application.interfaces.graph_repository import GraphRepository
 from app.infrastructure.graph.neo4j import Neo4jManager
 
@@ -152,6 +159,23 @@ class Neo4jGraphRepository(GraphRepository):
             ]
             paths.append(GraphPath(nodes=nodes, edges=edges))
         return paths
+
+    # --- overview (Stage 16 graph explorer) -------------------------------
+    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
+        uid = str(user_id)
+        node_records = await self._run(
+            "MATCH (n:MemoryNode {user_id: $uid}) RETURN n", uid=uid
+        )
+        edge_records = await self._run(
+            "MATCH (a:MemoryNode {user_id: $uid})-[r]->(b:MemoryNode {user_id: $uid}) "
+            "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
+            "type(r) AS t, r.weight AS w, properties(r) AS p",
+            uid=uid,
+        )
+        return GraphOverview(
+            nodes=[self._to_node(rec["n"]) for rec in node_records],
+            edges=[self._to_edge(rec) for rec in edge_records],
+        )
 
     # --- counts (Stage 13 observability: graph density) -------------------
     async def count_nodes(self, user_id: UUID | None = None) -> int:

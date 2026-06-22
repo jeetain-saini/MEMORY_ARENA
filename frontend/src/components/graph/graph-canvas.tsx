@@ -25,9 +25,16 @@ interface GraphCanvasProps {
   edges: GraphEdge[];
   rootId?: string | null;
   onNodeClick?: (nodeId: string) => void;
+  onEdgeClick?: (edge: GraphEdge) => void;
 }
 
-export function GraphCanvas({ nodes, edges, rootId, onNodeClick }: GraphCanvasProps) {
+export function GraphCanvas({ nodes, edges, rootId, onNodeClick, onEdgeClick }: GraphCanvasProps) {
+  const edgeById = useMemo(() => {
+    const map = new Map<string, GraphEdge>();
+    edges.forEach((e) => map.set(`${e.source_id}-${e.target_id}-${e.edge_type}`, e));
+    return map;
+  }, [edges]);
+
   const { rfNodes, rfEdges } = useMemo(() => {
     const mappedNodes: Node[] = nodes.map((node) => ({
       id: node.node_id,
@@ -74,6 +81,10 @@ export function GraphCanvas({ nodes, edges, rootId, onNodeClick }: GraphCanvasPr
         fitView
         proOptions={{ hideAttribution: true }}
         onNodeClick={(_, node) => onNodeClick?.(node.id)}
+        onEdgeClick={(_, edge) => {
+          const found = edgeById.get(edge.id);
+          if (found) onEdgeClick?.(found);
+        }}
       >
         <Background />
         <Controls showInteractive={false} />

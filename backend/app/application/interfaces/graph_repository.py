@@ -10,7 +10,13 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from uuid import UUID
 
-from app.application.dto.graph_dto import GraphEdge, GraphEdgeType, GraphNode, GraphPath
+from app.application.dto.graph_dto import (
+    GraphEdge,
+    GraphEdgeType,
+    GraphNode,
+    GraphOverview,
+    GraphPath,
+)
 
 
 class GraphRepository(ABC):
@@ -56,6 +62,11 @@ class GraphRepository(ABC):
     async def find_paths(
         self, source_id: str, target_id: str, *, max_depth: int = 4
     ) -> list[GraphPath]: ...
+
+    # --- overview (Stage 16 graph explorer) -------------------------------
+    @abstractmethod
+    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
+        """All of a tenant's nodes plus the edges among them (one payload)."""
 
     # --- counts (Stage 13 observability: graph density) -------------------
     @abstractmethod

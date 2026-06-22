@@ -28,6 +28,14 @@ export interface GraphTraversalResult {
   edges: GraphEdge[];
 }
 
+export interface GraphOverview {
+  user_id: string;
+  node_count: number;
+  edge_count: number;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 export interface GraphSearchRequest {
   query: string;
   user_id: string;

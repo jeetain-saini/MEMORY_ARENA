@@ -67,6 +67,9 @@ from app.application.services.retrieval.vector_retriever import VectorRetriever
 from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
 from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.memory_analytics_service import MemoryAnalyticsService
+from app.application.services.contradiction_resolution_service import (
+    ContradictionResolutionService,
+)
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.services.observability.memory_health_service import MemoryHealthService
 from app.application.services.auth.auth_service import AuthService
@@ -284,6 +287,16 @@ def get_graph_repository() -> GraphRepository:
     return build_graph_repository()
 
 
+def get_contradiction_resolution_service(
+    uow: UnitOfWork = Depends(get_unit_of_work),
+    graph_repo: GraphRepository = Depends(get_graph_repository),
+    dispatcher: EventDispatcher = Depends(get_event_dispatcher),
+    principal: AuthPrincipal | None = Depends(get_current_principal),
+) -> ContradictionResolutionService:
+    """Assemble the contradiction-resolution service for a request (Stage 16)."""
+    return ContradictionResolutionService(uow, graph_repo, dispatcher, principal)
+
+
 def get_graph_traversal_service(
     repository: GraphRepository = Depends(get_graph_repository),
     config: GraphConfig = Depends(get_graph_config),
@@ -495,6 +508,7 @@ UnitOfWorkDep = Depends(get_unit_of_work)
 EventDispatcherDep = Depends(get_event_dispatcher)
 MemoryServiceDep = Depends(get_memory_service)
 MemoryIntelligenceServiceDep = Depends(get_memory_intelligence_service)
+ContradictionResolutionServiceDep = Depends(get_contradiction_resolution_service)
 MemoryAnalyticsServiceDep = Depends(get_memory_analytics_service)
 MemoryHealthServiceDep = Depends(get_memory_health_service)
 EmbeddingProviderDep = Depends(get_embedding_provider)

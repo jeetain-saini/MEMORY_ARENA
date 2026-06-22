@@ -29,6 +29,11 @@ class MemoryHealthResponseSchema(BaseModel):
     summary_scopes_expected: int
     summary_scopes_present: int
     summary_coverage: float
+    contradiction_count: int
+    superseded_count: int
+    type_distribution: dict[str, int]
+    average_importance: float
+    average_confidence: float
     notes: dict[str, str]
 
     @classmethod

@@ -189,12 +189,18 @@ def test_every_protected_route_is_covered() -> None:
         "/api/v1/memories/user/{user_id}", "/api/v1/memories/analytics",
         "/api/v1/memories/health", "/api/v1/summaries/{user_id}",
         "/api/v1/summaries/{user_id}/{scope}", "/api/v1/observability/traces",
+        # Stage 16: route-level authorize_owner on the path user_id.
+        "/api/v1/graph/overview/{user_id}",
     }
     tested |= open_paths
     # Intelligence + by-id mutate routes are covered at the service level.
     service_level = {
         "/api/v1/memories/{memory_id}/reinforce", "/api/v1/memories/{memory_id}/promote",
         "/api/v1/memories/{memory_id}/archive",
+        # Stage 16: service-level authorize_owner (restore on the memory's owner;
+        # resolve validates ownership of both keep_id and archive_id).
+        "/api/v1/memories/{memory_id}/restore",
+        "/api/v1/memories/contradictions/resolve",
     }
     tested |= service_level
     uncovered = {

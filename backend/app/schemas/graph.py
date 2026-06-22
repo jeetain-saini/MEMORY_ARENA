@@ -12,6 +12,7 @@ from app.application.dto.graph_dto import (
     GraphEdge,
     GraphEdgeType,
     GraphNode,
+    GraphOverview,
     GraphTraversalResult,
     NodeType,
 )
@@ -123,3 +124,23 @@ class GraphMemoryViewSchema(BaseModel):
     node: GraphNodeSchema | None
     neighbors: list[GraphNodeSchema]
     edges: list[GraphEdgeSchema]
+
+
+class GraphOverviewSchema(BaseModel):
+    """A tenant's full graph for the explorer: nodes + typed edges."""
+
+    user_id: UUID
+    node_count: int
+    edge_count: int
+    nodes: list[GraphNodeSchema]
+    edges: list[GraphEdgeSchema]
+
+    @classmethod
+    def from_dto(cls, user_id: UUID, dto: GraphOverview) -> "GraphOverviewSchema":
+        return cls(
+            user_id=user_id,
+            node_count=len(dto.nodes),
+            edge_count=len(dto.edges),
+            nodes=[GraphNodeSchema.from_dto(n) for n in dto.nodes],
+            edges=[GraphEdgeSchema.from_dto(e) for e in dto.edges],
+        )

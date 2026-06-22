@@ -190,6 +190,13 @@ class Settings(BaseSettings):
     # "hnsw" (pgvector ANN pushdown), or "auto" (ANN on PostgreSQL, scan elsewhere).
     vector_search_mode: str = "scan"
 
+    # --- Conversational memory capture (Stage 15) -------------------------
+    # When true, a user's /query turn is run through a lightweight policy and,
+    # if it looks like a durable user fact, submitted to the existing ingestion
+    # pipeline (off the request path). OFF by default — opt-in.
+    conversation_capture_enabled: bool = False
+    capture_min_tokens: int = 2  # minimum tokens for a turn to be capture-eligible
+
     # --- Deployment (Stage 14 deployment-readiness) -----------------------
     # Create the schema on startup via Base.metadata.create_all. Intended for
     # SQLite/free-tier deploys where Alembic cannot run (migration 0001 enables

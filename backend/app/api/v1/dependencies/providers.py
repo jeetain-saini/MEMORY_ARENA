@@ -35,6 +35,12 @@ from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.interfaces.consolidation_job_processor import ConsolidationJobProcessor
 from app.application.interfaces.workflow_job_processor import WorkflowJobProcessor
 from app.application.dto.agent_dto import AgentConfig
+from app.application.services.agent.conversation_capture_policy import (
+    ConversationCapturePolicy,
+)
+from app.application.services.agent.conversation_capture_service import (
+    ConversationCaptureService,
+)
 from app.application.services.agent.tools import (
     ContextBuilderTool,
     GraphExpansionTool,
@@ -402,9 +408,20 @@ def get_query_use_case(
     runtime: AgentRuntime = Depends(get_agent_runtime),
     recorder: TraceRecorder = Depends(get_trace_recorder),
     principal: AuthPrincipal | None = Depends(get_current_principal),
+    processor: WorkflowJobProcessor = Depends(get_workflow_processor),
+    settings: Settings = Depends(get_settings),
 ) -> QueryMemoryUseCase:
-    """Assemble the query use case for a request."""
-    return QueryMemoryUseCaseImpl(runtime, recorder, principal)
+    """Assemble the query use case for a request.
+
+    Conversational capture (Stage 15) reuses the ingestion processor; it is a
+    no-op unless ``CONVERSATION_CAPTURE_ENABLED`` is set.
+    """
+    capture = ConversationCaptureService(
+        processor,
+        ConversationCapturePolicy(min_tokens=settings.capture_min_tokens),
+        enabled=settings.conversation_capture_enabled,
+    )
+    return QueryMemoryUseCaseImpl(runtime, recorder, principal, capture)
 
 
 def get_summary_service(

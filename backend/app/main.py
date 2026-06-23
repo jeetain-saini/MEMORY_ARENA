@@ -60,6 +60,7 @@ from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryU
 from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
+from app.core.startup import await_healthy
 from app.infrastructure.cache.factory import build_cache_provider
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
@@ -97,7 +98,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # --- Startup: bring datastore connections online ----------------------
     _logger.info("startup.begin", extra={"environment": settings.app_env})
+    # PostgreSQL is the hard dependency. connect() only builds the (lazy) engine,
+    # so eagerly probe it with retry/backoff: surface a dead DB now with a clear
+    # diagnostic instead of crashing later inside the first query/seeding.
     await postgres_manager.connect(settings)
+    await await_healthy(
+        "postgres", postgres_manager.health_check,
+        attempts=settings.startup_max_attempts,
+        base_delay=settings.startup_backoff_base_seconds,
+        required=True,
+    )
 
     # Optional schema bootstrap for SQLite / free-tier deploys (Alembic can't run
     # on SQLite because migration 0001 enables the pgvector extension). Opt-in;
@@ -116,6 +126,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # enabled. A connect failure is logged and ignored so a minimal deploy boots.
     try:
         await redis_manager.connect(settings)
+        await await_healthy(
+            "redis", redis_manager.health_check,
+            attempts=settings.startup_max_attempts,
+            base_delay=settings.startup_backoff_base_seconds,
+            required=False,
+        )
     except Exception:  # noqa: BLE001 — optional backend; degrade gracefully
         _logger.warning("redis.connect_failed", exc_info=True)
 
@@ -124,6 +140,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.graph_backend.lower() == "neo4j":
         try:
             await neo4j_manager.connect(settings)
+            await await_healthy(
+                "neo4j", neo4j_manager.health_check,
+                attempts=settings.startup_max_attempts,
+                base_delay=settings.startup_backoff_base_seconds,
+                required=False,
+            )
         except Exception:  # noqa: BLE001 — optional backend; degrade gracefully
             _logger.warning("neo4j.connect_failed", exc_info=True)
     else:
@@ -306,14 +328,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Runs after every event handler is registered, so seeded writes drive the
     # real embedding/graph/consolidation pipeline. Idempotent; OFF by default.
     if settings.seed_demo_on_startup:
+        # Seeding is a convenience, never a startup requirement: a failure here
+        # must not crash the app (it previously aborted the whole lifespan).
         from app.infrastructure.seed.demo_seed import seed_demo
 
-        result = await seed_demo(
-            lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
-            in_process_dispatcher,
-            summary_generator=DeterministicSummaryGenerator(),
-        )
-        _logger.info("seed.complete", extra=result)
+        try:
+            result = await seed_demo(
+                lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+                in_process_dispatcher,
+                summary_generator=DeterministicSummaryGenerator(),
+            )
+            _logger.info("seed.complete", extra=result)
+        except Exception:  # noqa: BLE001 — seeding is best-effort, not fatal
+            _logger.warning("seed.failed", exc_info=True)
 
     _logger.info("startup.complete")
 

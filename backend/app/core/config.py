@@ -205,6 +205,14 @@ class Settings(BaseSettings):
     # Legacy "run every N seconds ignoring cron" driver; kept for dev/tests only.
     # 0 by default — cron mode above is the production driver.
     scheduler_interval_seconds: float = 0.0
+    # --- Startup resilience (production hardening) ------------------------
+    # Eagerly probe each datastore at startup with capped exponential backoff so
+    # a slow/missing dependency surfaces a clear diagnostic (and, for Postgres,
+    # fails fast) instead of crashing on the first query. Defaults tolerate a
+    # ~slow datastore boot (depends_on healthchecks usually make this a no-op).
+    startup_max_attempts: int = 10
+    startup_backoff_base_seconds: float = 0.5
+
     # --- Distributed locking (Stage 18.3) ---------------------------------
     # Coordinates single-owner maintenance across instances: "memory" (default;
     # process-local, no Redis) | "redis" (cross-instance lease). The periodic

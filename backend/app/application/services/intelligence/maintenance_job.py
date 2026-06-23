@@ -23,6 +23,7 @@ from uuid import UUID
 
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.scheduler import ScheduledJob
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.intelligence.clustering_engine import ClusteringEngine
@@ -102,13 +103,17 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
         promotion: PromotionEngine | None = None,
         forgetting: ForgettingEngine | None = None,
         clustering: ClusteringEngine | None = None,
+        metrics: MetricsSink | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._graph = graph_repo
+        self._metrics = metrics
         self._evolution = evolution or ImportanceEvolutionService()
         self._promotion = promotion or PromotionEngine(uow_factory, graph_repo, dispatcher)
         self._forgetting = forgetting or ForgettingEngine(uow_factory, graph_repo, dispatcher)
-        self._clustering = clustering or ClusteringEngine(uow_factory, graph_repo)
+        self._clustering = clustering or ClusteringEngine(
+            uow_factory, graph_repo, metrics=metrics
+        )
 
     async def run(self) -> None:
         await self.run_cycle()
@@ -135,6 +140,11 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
             clustered=clustered,
             forgotten=forgotten,
         )
+        if self._metrics is not None:
+            self._metrics.incr("memories_promoted_total", promoted)
+            self._metrics.incr("memories_forgotten_total", forgotten)
+            self._metrics.incr("memories_clustered_total", clustered)
+            self._metrics.incr("memories_importance_evolved_total", importance)
         _logger.info("intelligence.maintenance", extra=asdict(result))
         return result
 

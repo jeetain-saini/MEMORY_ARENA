@@ -18,6 +18,7 @@ from uuid import UUID
 
 from app.application.dto.graph_dto import GraphEdge, GraphEdgeType
 from app.application.interfaces.graph_repository import GraphRepository
+from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.context._text import jaccard
 from app.application.services.context.conflict_detector import STOPWORDS
@@ -52,10 +53,13 @@ class ClusteringEngine:
     def __init__(
         self, uow_factory: Callable[[], UnitOfWork], graph_repo: GraphRepository,
         config: ClusterConfig | None = None,
+        *,
+        metrics: MetricsSink | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._graph = graph_repo
         self._config = config or ClusterConfig()
+        self._metrics = metrics
 
     async def cluster_user(self, user_id: UUID) -> list[ClusterSummary]:
         async with self._uow_factory() as uow:
@@ -115,11 +119,33 @@ class ClusteringEngine:
         score = round(sum(pairs) / len(pairs), 4) if pairs else 0.0
 
         rep = ordered[0]
+        id_strs = {str(i) for i in ids}
+        # Phase 2: only write members whose cluster_id actually changed. A stable
+        # cluster re-run produces zero PostgreSQL writes.
         async with self._uow_factory() as uow:
             for m in ordered:
+                if m.metadata.get(_CLUSTER_KEY) == cluster_id:
+                    continue
                 m.metadata[_CLUSTER_KEY] = cluster_id
                 await uow.memories.update(m)
+                if self._metrics is not None:
+                    self._metrics.incr("clustering.member_writes_total")
             await uow.commit()
+
+        # Phase 4: prune stale CLUSTER_MEMBER edges on the representative before
+        # (re)creating the current star, so the graph reflects current state and
+        # edge count stabilizes. Other edge types (PROMOTED_FROM / CONTRADICTS /
+        # SUPERSEDES) are explicitly preserved.
+        for edge in await self._graph.get_edges(str(rep.id)):
+            if edge.edge_type is not GraphEdgeType.CLUSTER_MEMBER:
+                continue
+            other = edge.target_id if edge.source_id == str(rep.id) else edge.source_id
+            if other not in id_strs:
+                await self._graph.delete_edge(
+                    edge.source_id, edge.target_id, GraphEdgeType.CLUSTER_MEMBER
+                )
+                if self._metrics is not None:
+                    self._metrics.incr("clustering.stale_edges_removed_total")
         for m in ordered[1:]:
             await self._graph.create_edge(
                 GraphEdge(

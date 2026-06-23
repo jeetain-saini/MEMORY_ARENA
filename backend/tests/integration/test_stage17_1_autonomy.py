@@ -190,8 +190,9 @@ def test_maintenance_job_runs_full_cycle() -> None:
 
 
 def test_scheduler_ticker_runs_forgetting_automatically() -> None:
-    """End-to-end autonomy proof: the interval ticker -> run_all -> maintenance
-    job -> ForgettingEngine forgets a stale memory with no manual call."""
+    """End-to-end autonomy + Phase 1 proof: the cron ticker fires the maintenance
+    job when its cron is due -> ForgettingEngine forgets a stale memory with no
+    manual call, exactly once (deduped within the minute)."""
 
     async def scenario() -> None:
         engine = await make_engine()
@@ -207,13 +208,16 @@ def test_scheduler_ticker_runs_forgetting_automatically() -> None:
                        created_at=old, updated_at=old)
         await _save(uowf, stale)
 
-        scheduler = InProcessScheduler(interval_seconds=0.02)
+        # Clock pinned to the cron's due minute (02:00); the cron ticker fires
+        # the daily job once and then dedupes — the production driver path.
+        due = datetime(2026, 6, 23, 2, 0, tzinfo=timezone.utc)
+        scheduler = InProcessScheduler(cron_tick_seconds=0.01, clock=lambda: due)
         scheduler.register(
             MemoryIntelligenceMaintenanceJob(uowf, graph, dispatcher), cron="0 2 * * *"
         )
-        await scheduler.start()  # ticker starts because interval > 0
+        await scheduler.start()
         try:
-            for _ in range(50):  # poll up to ~1s for an automatic tick
+            for _ in range(50):  # poll up to ~1s for the due tick
                 await asyncio.sleep(0.02)
                 async with uowf() as uow:
                     m = await uow.memories.get_by_id(stale.id)
@@ -224,7 +228,7 @@ def test_scheduler_ticker_runs_forgetting_automatically() -> None:
 
         async with uowf() as uow:
             final = await uow.memories.get_by_id(stale.id)
-        assert final.status is MemoryStatus.FORGOTTEN  # forgotten by the ticker, no API call
+        assert final.status is MemoryStatus.FORGOTTEN  # forgotten by the cron tick, no API call
         await engine.dispose()
 
     _run(scenario)

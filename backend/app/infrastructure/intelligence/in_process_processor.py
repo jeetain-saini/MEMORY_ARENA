@@ -40,5 +40,9 @@ class InProcessIntelligenceJobProcessor(IntelligenceJobProcessor):
             _logger.exception("intelligence.job.failed", extra={"user_id": str(job.user_id)})
 
     async def drain(self) -> None:
-        if self._tasks:
+        # Loop so that tasks spawned *during* draining (e.g. a promotion that
+        # dispatches MemoryCreated, re-triggering this handler) are also awaited.
+        # Terminates because the cascade is bounded (promotion dedup -> no new
+        # work), leaving no orphan tasks.
+        while self._tasks:
             await asyncio.gather(*list(self._tasks), return_exceptions=True)

@@ -162,11 +162,14 @@ class Settings(BaseSettings):
     intelligence_maintenance_enabled: bool = True
     intelligence_event_enabled: bool = True
     intelligence_cron: str = "0 2 * * *"
-    # >0 starts an in-process ticker that fires all scheduled jobs every N
-    # seconds (true periodic autonomy without an external driver). Default 3600
-    # (hourly) so the maintenance job — and therefore ForgettingEngine — runs
-    # automatically out of the box; set 0 to fall back to driver-only triggering.
-    scheduler_interval_seconds: float = 3600.0
+    # Cron-aware autonomy (Phase 1): the scheduler evaluates each job's cron
+    # every ``scheduler_tick_seconds`` and fires only the due ones (so the
+    # maintenance job — and ForgettingEngine — run on ``intelligence_cron``,
+    # daily at 02:00, not on a fixed interval). 0 disables the live driver.
+    scheduler_tick_seconds: float = 60.0
+    # Legacy "run every N seconds ignoring cron" driver; kept for dev/tests only.
+    # 0 by default — cron mode above is the production driver.
+    scheduler_interval_seconds: float = 0.0
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")

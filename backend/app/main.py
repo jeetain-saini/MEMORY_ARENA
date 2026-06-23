@@ -70,6 +70,7 @@ from app.infrastructure.events.in_process_dispatcher import in_process_dispatche
 from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.in_process_processor import InProcessGraphJobProcessor
 from app.infrastructure.graph.neo4j import neo4j_manager
+from app.infrastructure.observability.metrics_factory import build_metrics_sink
 from app.infrastructure.llm.graphs.factory import build_consolidation_engine, build_workflow_engine
 from app.infrastructure.llm.in_process_consolidation_processor import (
     InProcessConsolidationJobProcessor,
@@ -206,7 +207,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs no live ticker by default; a production driver fires jobs on their
     # crons. All reuse existing services and run off the request path.
     maintenance_processor = None
-    scheduler = InProcessScheduler(interval_seconds=settings.scheduler_interval_seconds)
+    scheduler = InProcessScheduler(
+        interval_seconds=settings.scheduler_interval_seconds,
+        cron_tick_seconds=settings.scheduler_tick_seconds,
+        metrics=build_metrics_sink(),
+    )
     if settings.maintenance_enabled:
         uow_factory = lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)  # noqa: E731
         maintenance_config = MaintenanceConfig(
@@ -263,7 +268,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if settings.intelligence_maintenance_enabled:
         scheduler.register(
             MemoryIntelligenceMaintenanceJob(
-                intel_uow_factory, build_graph_repository(), in_process_dispatcher
+                intel_uow_factory, build_graph_repository(), in_process_dispatcher,
+                metrics=build_metrics_sink(),
             ),
             cron=settings.intelligence_cron,
         )

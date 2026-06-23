@@ -25,6 +25,7 @@ from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.context.conflict_detector import STOPWORDS
 from app.application.services.retrieval.bm25 import tokenize
 from app.domain.entities.memory import Memory
+from app.domain.entities.memory_score import MemoryScore
 from app.domain.value_objects.memory_category import MemoryCategory
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
@@ -36,6 +37,12 @@ _PROMOTION_MARKER = "promoted_to_semantic"
 @dataclass(frozen=True)
 class PromotionConfig:
     min_occurrences: int = 2  # how many episodic recurrences trigger promotion
+    # Importance lift applied each time an existing semantic memory is reinforced
+    # (re-promotion of the same concept from a new batch of recurrences).
+    reinforce_importance_bump: float = 0.1
+
+
+_PROMOTION_SUBJECT_KEY = "key"  # stable per-concept key stored in metadata["promotion"]
 
 
 def _signature(content: str) -> frozenset[str]:
@@ -77,22 +84,41 @@ class PromotionEngine:
             if sig:
                 groups.setdefault(sig, []).append(m)
 
+        # Dedup index: existing promoted semantic memories keyed by concept, so a
+        # recurring concept reinforces its single representation instead of
+        # spawning duplicates (Phase 3).
+        existing_by_key: dict[str, Memory] = {}
+        for m in memories:
+            if m.status is MemoryStatus.ACTIVE and m.category is MemoryCategory.SEMANTIC:
+                key = (m.metadata.get("promotion") or {}).get(_PROMOTION_SUBJECT_KEY)
+                if key:
+                    existing_by_key[key] = m
+
         created: list[UUID] = []
         for sig, members in groups.items():
             if len(members) < self._config.min_occurrences:
                 continue
-            created.append(await self._promote_group(user_id, sig, members))
+            existing = existing_by_key.get(_subject(sig))
+            if existing is not None:
+                await self._reinforce_existing(existing, members)  # no duplicate
+            else:
+                created.append(await self._promote_group(user_id, sig, members))
         return created
 
     async def _promote_group(
         self, user_id: UUID, signature: frozenset[str], members: list[Memory]
     ) -> UUID:
-        content = f"Experienced with {_subject(signature)}"
+        subject = _subject(signature)
+        content = f"Experienced with {subject}"
         semantic = Memory.create(
             user_id=user_id,
             content=content,
             memory_type=MemoryType.SKILL,
-            metadata={"promotion": {"reason": "recurring_episodic", "sources": len(members)}},
+            metadata={"promotion": {
+                "reason": "recurring_episodic",
+                "sources": len(members),
+                _PROMOTION_SUBJECT_KEY: subject,
+            }},
         )
         semantic.reclassify(MemoryCategory.SEMANTIC)
         async with self._uow_factory() as uow:
@@ -119,3 +145,48 @@ class PromotionEngine:
             extra={"semantic_id": str(semantic.id), "sources": len(members)},
         )
         return semantic.id
+
+    async def _reinforce_existing(self, existing: Memory, members: list[Memory]) -> None:
+        """Strengthen the existing semantic memory instead of creating a duplicate.
+
+        Reinforces (frequency + utility), lifts importance, records the new
+        sources in metadata, stamps the sources, and links fresh PROMOTED_FROM
+        edges from the existing semantic memory.
+        """
+        async with self._uow_factory() as uow:
+            target = await uow.memories.get_by_id(existing.id)
+            if target is None:
+                return
+            target.reinforce()
+            s = target.score
+            target.score = MemoryScore(
+                importance=min(1.0, s.importance + self._config.reinforce_importance_bump),
+                utility=s.utility,
+                frequency=s.frequency,
+                recency=s.recency,
+                confidence=s.confidence,
+            )
+            promotion = dict(target.metadata.get("promotion") or {})
+            promotion["sources"] = int(promotion.get("sources", 0)) + len(members)
+            target.metadata["promotion"] = promotion
+            await uow.memories.update(target)
+            for src in members:
+                src.stamp_maintenance(_PROMOTION_MARKER, "done")
+                await uow.memories.update(src)
+            await uow.commit()
+        await self._dispatcher.dispatch(target.pull_events())
+
+        for src in members:
+            await self._graph.create_edge(
+                GraphEdge(
+                    source_id=str(existing.id),
+                    target_id=str(src.id),
+                    edge_type=GraphEdgeType.PROMOTED_FROM,
+                    weight=1.0,
+                    properties={"reason": "recurring_episodic"},
+                )
+            )
+        _logger.info(
+            "promotion.reinforced",
+            extra={"semantic_id": str(existing.id), "sources": len(members)},
+        )

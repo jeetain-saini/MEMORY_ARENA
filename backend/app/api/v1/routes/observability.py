@@ -15,6 +15,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Query
+from fastapi.responses import PlainTextResponse
 
 from app.api.v1.dependencies.providers import (
     CurrentPrincipalDep,
@@ -26,6 +27,7 @@ from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.trace_recorder import TraceRecorder
 from app.application.services.authorization import resolve_scope
 from app.core.logging import get_request_id
+from app.infrastructure.observability.prometheus import render_prometheus
 from app.schemas.observability import MetricsSnapshotSchema, RequestTraceSchema
 from app.schemas.responses import APIResponse
 
@@ -63,4 +65,20 @@ async def get_metrics(
     return APIResponse(
         data=MetricsSnapshotSchema.from_dto(metrics.snapshot()),
         request_id=get_request_id(),
+    )
+
+
+@router.get(
+    "/prometheus",
+    response_class=PlainTextResponse,
+    summary="Prometheus exposition of all counters + latency aggregates",
+    responses={200: {"content": {"text/plain": {}}}},
+)
+async def prometheus_metrics(
+    metrics: MetricsSink = MetricsSinkDep,
+) -> PlainTextResponse:
+    """Prometheus scrape target (Phase 4). Configure a job to hit this path."""
+    return PlainTextResponse(
+        render_prometheus(metrics.snapshot()),
+        media_type="text/plain; version=0.0.4; charset=utf-8",
     )

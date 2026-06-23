@@ -1,0 +1,66 @@
+# Alerting rules for MemoryArena (Phase 4.3). Loaded by prometheus.yml.
+groups:
+  - name: memoryarena-availability
+    rules:
+      - alert: BackendDown
+        expr: up{job="memoryarena-backend"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "MemoryArena backend is down"
+          description: "Prometheus cannot scrape the backend for >2m."
+
+  - name: memoryarena-latency
+    rules:
+      - alert: HighRetrievalLatencyP95
+        expr: memoryarena_retrieval_latency_ms{quantile="0.95"} > 500
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Retrieval p95 latency is high"
+          description: "memoryarena_retrieval_latency_ms p95 > 500ms for 5m."
+      - alert: HighVectorLatencyP95
+        expr: memoryarena_vector_latency_ms{quantile="0.95"} > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Vector search p95 latency is high"
+
+  - name: memoryarena-cache
+    rules:
+      # Cache hit ratio over the last 15m fell below 50% (cache effectiveness).
+      - alert: LowCacheHitRatio
+        expr: >
+          sum(rate(memoryarena_cache_hit_analytics[15m]))
+          /
+          clamp_min(sum(rate(memoryarena_cache_hit_analytics[15m]))
+                    + sum(rate(memoryarena_cache_miss_analytics[15m])), 1)
+          < 0.5
+        for: 15m
+        labels:
+          severity: info
+        annotations:
+          summary: "Analytics cache hit ratio < 50%"
+
+  - name: memoryarena-intelligence
+    rules:
+      # The single-owner maintenance lock is being contended every cycle, which
+      # may mean a stuck owner is never releasing the lease.
+      - alert: MaintenanceAlwaysSkipped
+        expr: increase(memoryarena_intelligence_maintenance_skipped_total[1h]) > 4
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Intelligence maintenance skipped repeatedly (lock contention)"
+      # A sudden spike in forgetting can indicate a misconfigured ForgettingConfig.
+      - alert: ForgettingSpike
+        expr: increase(memoryarena_memories_forgotten_total[1h]) > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually high number of memories forgotten in the last hour"

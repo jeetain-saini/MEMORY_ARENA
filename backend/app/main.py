@@ -279,6 +279,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
                 lock=build_distributed_lock(MonotonicClock()),
                 lock_key=settings.intelligence_lock_key,
                 lock_ttl_seconds=settings.intelligence_lock_ttl_seconds,
+                max_concurrency=settings.intelligence_max_concurrency,
             ),
             cron=settings.intelligence_cron,
         )

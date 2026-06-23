@@ -178,9 +178,15 @@ class Settings(BaseSettings):
     # ``intelligence_lock_key`` executes a cycle at a time.
     lock_backend: str = "memory"
     intelligence_lock_key: str = "intelligence:maintenance"
-    # Lease TTL for the maintenance lock; renewed between tenants so a long cycle
+    # Lease TTL for the maintenance lock; renewed between chunks so a long cycle
     # keeps ownership, while a crashed owner's lease lapses and frees the lock.
     intelligence_lock_ttl_seconds: int = 300
+    # --- Parallel intelligence execution (Stage 18.4) ---------------------
+    # Max tenants processed concurrently per maintenance cycle. Each tenant uses
+    # its own unit of work and disjoint rows, so this overlaps DB/graph I/O up to
+    # the ceiling. Keep <= the DB connection pool size. Default 1 = sequential
+    # (safe for a single shared connection, e.g. SQLite); raise it on Postgres.
+    intelligence_max_concurrency: int = 1
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")

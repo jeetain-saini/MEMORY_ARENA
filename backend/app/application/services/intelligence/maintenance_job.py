@@ -17,7 +17,7 @@ manual overrides of this automatic path.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
@@ -27,6 +27,7 @@ from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.scheduler import ScheduledJob
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.concurrency import bounded_gather, chunked
 from app.application.services.intelligence.clustering_engine import ClusteringEngine
 from app.application.services.locking import LockLease, single_owner
 from app.application.services.intelligence.forgetting_engine import ForgettingEngine
@@ -120,6 +121,7 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
         lock: DistributedLock | None = None,
         lock_key: str = "intelligence:maintenance",
         lock_ttl_seconds: int = 300,
+        max_concurrency: int = 1,
     ) -> None:
         self._uow_factory = uow_factory
         self._graph = graph_repo
@@ -128,6 +130,7 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
         self._lock = lock
         self._lock_key = lock_key
         self._lock_ttl = lock_ttl_seconds
+        self._max_concurrency = max(1, max_concurrency)
         self._evolution = evolution or ImportanceEvolutionService()
         self._promotion = promotion or PromotionEngine(uow_factory, graph_repo, dispatcher)
         self._forgetting = forgetting or ForgettingEngine(uow_factory, graph_repo, dispatcher)
@@ -157,36 +160,65 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
                 return
             await self.run_cycle(lease=lease)
 
+    def _tenant_factory(
+        self, uid: UUID
+    ) -> Callable[[], Awaitable[tuple[int, int, int, int]]]:
+        # Bind uid now so bounded_gather can start each tenant lazily (no late
+        # binding across the chunk).
+        return lambda: self._run_tenant(uid)
+
+    async def _run_tenant(self, uid: UUID) -> tuple[int, int, int, int]:
+        """Run the full evolution cycle for a single tenant; return its counts.
+
+        Order matters: evolve importance first (forgetting reads it), then promote
+        (creates semantic memories), cluster (includes the new semantic ones), and
+        finally forget (protect_promoted keeps the freshly promoted ones).
+
+        Stage 18.1: one batched subgraph read feeds importance evolution (which
+        runs before any graph mutation). Promotion and clustering then add edges,
+        so forgetting takes a *fresh* snapshot to see the updated topology — two
+        get_subgraph calls per tenant in place of the previous O(N) per-memory
+        get_edges reads.
+        """
+        pre_snapshot = await self._snapshots.snapshot(uid)
+        importance = await evolve_importance_for_user(
+            self._uow_factory, self._graph, self._evolution, uid, snapshot=pre_snapshot
+        )
+        promoted = len(await self._promotion.promote_user(uid))
+        clustered = len(await self._clustering.cluster_user(uid))
+        post_snapshot = await self._snapshots.snapshot(uid)
+        forgotten = len(await self._forgetting.sweep_user(uid, snapshot=post_snapshot))
+        return importance, promoted, clustered, forgotten
+
     async def run_cycle(
         self, *, user_id: UUID | None = None, lease: LockLease | None = None
     ) -> IntelligenceMaintenanceResult:
-        """Run one full evolution cycle for one tenant (or all tenants)."""
+        """Run one full evolution cycle for one tenant (or all tenants).
+
+        Stage 18.4: tenants are processed in chunks of ``max_concurrency`` with
+        ``bounded_gather`` — each tenant uses its own unit of work and disjoint
+        rows/graph nodes, so they run safely in parallel up to the ceiling while
+        a connection pool bounds the in-flight DB/graph work. ``max_concurrency=1``
+        (the default) is ordered sequential execution, identical to pre-18.4. The
+        lock lease is renewed between chunks so a long cycle keeps ownership.
+        """
         tenants = await self._tenants(user_id)
         importance = promoted = clustered = forgotten = 0
-        for uid in tenants:
-            # Order matters: evolve importance first (forgetting reads it), then
-            # promote (creates semantic memories), cluster (includes the new
-            # semantic ones), and finally forget (protect_promoted keeps the
-            # freshly promoted ones).
-            #
-            # Stage 18.1: one batched subgraph read feeds importance evolution
-            # (which runs before any graph mutation). Promotion and clustering
-            # then add edges, so forgetting takes a *fresh* snapshot to see the
-            # updated topology — two get_subgraph calls per tenant in place of
-            # the previous O(N) per-memory get_edges reads.
-            pre_snapshot = await self._snapshots.snapshot(uid)
-            importance += await evolve_importance_for_user(
-                self._uow_factory, self._graph, self._evolution, uid, snapshot=pre_snapshot
+        for chunk in chunked(tenants, self._max_concurrency):
+            counts = await bounded_gather(
+                [self._tenant_factory(uid) for uid in chunk],
+                limit=self._max_concurrency,
             )
-            promoted += len(await self._promotion.promote_user(uid))
-            clustered += len(await self._clustering.cluster_user(uid))
-            post_snapshot = await self._snapshots.snapshot(uid)
-            forgotten += len(await self._forgetting.sweep_user(uid, snapshot=post_snapshot))
+            for imp, prom, clus, forg in counts:
+                importance += imp
+                promoted += prom
+                clustered += clus
+                forgotten += forg
             # Stage 18.3: keep the lease alive across a long multi-tenant cycle. If
             # ownership was lost (e.g. our lease lapsed and another instance took
             # over), stop rather than keep mutating under a lock we no longer hold.
             if lease is not None and not await lease.renew():
-                _logger.warning("intelligence.maintenance.lease_lost", extra={"tenant": str(uid)})
+                _logger.warning("intelligence.maintenance.lease_lost")
                 break
         result = IntelligenceMaintenanceResult(
             tenants=len(tenants),

@@ -42,17 +42,23 @@ def recency_score(updated_at: datetime, now: datetime, half_life_days: float) ->
 def memory_boost_score(memory: Memory, config: RetrievalConfig) -> float:
     """Boost from Memory Intelligence signals, normalized to [0, 1].
 
-    Blends importance/utility/frequency, then adds promotion and priority bonuses
-    so high-value memories rank higher.
+    Blends importance/utility/frequency/retrieval-frequency, then adds promotion,
+    priority, semantic, and cluster bonuses so evolved, high-value memories rank
+    higher. (Stage 17.1: importance evolves from retrieval, and retrieval_count,
+    semantic category, and cluster membership now feed ranking.)
     """
     score = memory.score
-    denom = config.mem_importance + config.mem_utility + config.mem_frequency
+    denom = (
+        config.mem_importance + config.mem_utility + config.mem_frequency + config.mem_retrieval
+    )
     base = 0.0
     if denom > 0:
+        retrieval_signal = clamp01(memory.retrieval_count / max(1, config.retrieval_saturation))
         base = (
             config.mem_importance * score.importance
             + config.mem_utility * score.utility
             + config.mem_frequency * score.frequency
+            + config.mem_retrieval * retrieval_signal
         ) / denom
 
     boost = config.promotion_bonus if memory.is_promoted else 0.0

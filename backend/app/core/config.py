@@ -154,6 +154,19 @@ class Settings(BaseSettings):
     promotion_cron: str = "0 5 * * *"
     summary_cron: str = "0 6 * * *"
 
+    # --- Stage 17.1: autonomous memory intelligence -----------------------
+    # The maintenance job (importance evolution + promotion + clustering +
+    # forgetting) is registered on the scheduler; the event handler triggers
+    # promotion/clustering reactively after each memory is created. Importance
+    # evolution per-retrieval is always on (in the retrieval tracker).
+    intelligence_maintenance_enabled: bool = True
+    intelligence_event_enabled: bool = True
+    intelligence_cron: str = "0 2 * * *"
+    # >0 starts an in-process ticker that fires all scheduled jobs every N
+    # seconds (true periodic autonomy without an external driver). 0 keeps the
+    # scheduler driver-triggered only (default; unchanged behavior).
+    scheduler_interval_seconds: float = 0.0
+
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
     jwt_algorithm: str = "HS256"

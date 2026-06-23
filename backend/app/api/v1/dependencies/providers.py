@@ -65,7 +65,9 @@ from app.application.services.retrieval.reranker import SimpleCrossEncoderRerank
 from app.application.services.intelligence.clustering_engine import ClusteringEngine
 from app.application.services.intelligence.forgetting_engine import ForgettingEngine
 from app.application.services.intelligence.promotion_engine import PromotionEngine
-from app.application.services.intelligence.retrieval_tracker import UnitOfWorkRetrievalTracker
+from app.application.services.intelligence.evolving_retrieval_tracker import (
+    EvolvingRetrievalTracker,
+)
 from app.application.services.retrieval.retrieval_service import MemoryRetrievalService
 from app.application.services.retrieval.vector_retriever import VectorRetriever
 from app.application.services.decay_strategies import DecayStrategy, ExponentialDecayStrategy
@@ -278,7 +280,8 @@ def get_memory_retrieval_service(
     )
     keyword = KeywordRetriever(uow_factory, config)
     hybrid = HybridRetriever(vector, keyword, config)
-    tracker = UnitOfWorkRetrievalTracker(uow_factory)  # Stage 17: retrieval frequency
+    # Stage 17.1: record retrieval frequency *and* evolve importance from it.
+    tracker = EvolvingRetrievalTracker(uow_factory)
     return MemoryRetrievalService(hybrid, reranker, principal, metrics, clock, tracker)
 
 

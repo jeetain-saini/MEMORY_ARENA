@@ -29,10 +29,13 @@ class _Registration:
 
 
 class InProcessScheduler(Scheduler):
-    def __init__(self) -> None:
+    def __init__(self, *, interval_seconds: float = 0.0) -> None:
         self._registry: dict[str, _Registration] = {}
         self._task: asyncio.Task | None = None
         self._running = False
+        # >0 drives a simple in-process ticker (Stage 17.1 autonomy); 0 keeps the
+        # scheduler explicitly driven via run_job/run_all (default).
+        self._interval = interval_seconds
 
     # -- registration ------------------------------------------------------
     def register(self, job: ScheduledJob, *, cron: str) -> None:
@@ -63,12 +66,25 @@ class InProcessScheduler(Scheduler):
 
     # -- lifecycle (port contract) -----------------------------------------
     async def start(self) -> None:
-        """Mark the scheduler running. No live ticker is started by default.
+        """Mark the scheduler running; start the ticker when an interval is set.
 
-        A production driver may override/extend this to drive cron schedules;
-        the offline default keeps execution explicit (``run_job``/``run_all``).
+        With ``interval_seconds == 0`` (default) no live ticker runs and
+        execution stays explicit (``run_job``/``run_all``). With a positive
+        interval, a background task fires ``run_all`` every interval — the
+        offline-friendly autonomy driver for Stage 17.1.
         """
         self._running = True
+        if self._interval > 0 and self._task is None:
+            self._task = asyncio.create_task(self._ticker())
+
+    async def _ticker(self) -> None:
+        try:
+            while self._running:
+                await asyncio.sleep(self._interval)
+                if self._running:
+                    await self.run_all()
+        except asyncio.CancelledError:  # graceful shutdown
+            pass
 
     async def stop(self) -> None:
         self._running = False

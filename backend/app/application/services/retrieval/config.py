@@ -27,12 +27,16 @@ class RetrievalConfig:
     mem_importance: float = 0.40
     mem_utility: float = 0.30
     mem_frequency: float = 0.30
+    # Stage 17.1: retrieval frequency feeds ranking directly (a memory returned
+    # often is more useful), saturating at ``retrieval_saturation`` retrievals.
+    mem_retrieval: float = 0.20
+    retrieval_saturation: int = 10
     promotion_bonus: float = 0.15
     priority_weight: float = 0.10
     priority_cap: int = 5
-    # Stage 17 additive signals (default 0.0 -> backward compatible; opt-in tuning).
-    semantic_bonus: float = 0.0   # extra rank for semantic (vs episodic) memories
-    cluster_bonus: float = 0.0    # extra rank for memories that belong to a cluster
+    # Stage 17.1 additive signals (active by default so evolution affects rank).
+    semantic_bonus: float = 0.04  # extra rank for semantic (vs episodic) memories
+    cluster_bonus: float = 0.04   # extra rank for memories that belong to a cluster
 
     # --- BM25 parameters --------------------------------------------------
     bm25_k1: float = 1.5

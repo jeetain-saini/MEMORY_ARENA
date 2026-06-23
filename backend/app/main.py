@@ -47,6 +47,14 @@ from app.application.services.maintenance.sweeps import (
     DecaySweepJob,
     PromotionSweepJob,
 )
+from app.application.services.intelligence.clustering_engine import ClusteringEngine
+from app.application.services.intelligence.intelligence_event_handler import (
+    IntelligenceEventHandler,
+)
+from app.application.services.intelligence.maintenance_job import (
+    MemoryIntelligenceMaintenanceJob,
+)
+from app.application.services.intelligence.promotion_engine import PromotionEngine
 from app.application.services.memory_intelligence_service import MemoryIntelligenceService
 from app.application.use_cases.ingest_memory_use_cases_impl import IngestMemoryUseCaseImpl
 from app.core.config import Settings, get_settings
@@ -70,6 +78,9 @@ from app.infrastructure.llm.in_process_maintenance_processor import (
     InProcessMaintenanceJobProcessor,
 )
 from app.infrastructure.llm.in_process_workflow_processor import InProcessWorkflowJobProcessor
+from app.infrastructure.intelligence.in_process_processor import (
+    InProcessIntelligenceJobProcessor,
+)
 from app.infrastructure.scheduler.in_process_scheduler import InProcessScheduler
 from app.infrastructure.summaries.deterministic_summary_generator import (
     DeterministicSummaryGenerator,
@@ -195,7 +206,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # runs no live ticker by default; a production driver fires jobs on their
     # crons. All reuse existing services and run off the request path.
     maintenance_processor = None
-    scheduler = InProcessScheduler()
+    scheduler = InProcessScheduler(interval_seconds=settings.scheduler_interval_seconds)
     if settings.maintenance_enabled:
         uow_factory = lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)  # noqa: E731
         maintenance_config = MaintenanceConfig(
@@ -225,6 +236,42 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         scheduler.register(ArchivalSweepJob(uow_factory, _intelligence), cron=settings.archival_cron)
         scheduler.register(PromotionSweepJob(uow_factory, _intelligence), cron=settings.promotion_cron)
         scheduler.register(SummaryRefreshJob(uow_factory, summary_service), cron=settings.summary_cron)
+
+    # --- Wire autonomous memory intelligence (Stage 17.1) ----------------
+    # Two automatic paths, both reusing the existing engines (the /intelligence/*
+    # endpoints remain manual overrides):
+    #   * reactive — MemoryCreated triggers promotion + clustering off the
+    #     request path (mirrors the inference handler);
+    #   * periodic — a single maintenance job runs importance evolution,
+    #     promotion, clustering, and forgetting across all tenants on its cron.
+    intelligence_processor = None
+    intel_uow_factory = lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker)  # noqa: E731
+    if settings.intelligence_event_enabled:
+        promotion_engine = PromotionEngine(
+            intel_uow_factory, build_graph_repository(), in_process_dispatcher
+        )
+        clustering_engine = ClusteringEngine(intel_uow_factory, build_graph_repository())
+
+        async def _run_intelligence(job) -> None:
+            await promotion_engine.promote_user(job.user_id)
+            await clustering_engine.cluster_user(job.user_id)
+
+        intelligence_processor = InProcessIntelligenceJobProcessor(_run_intelligence)
+        IntelligenceEventHandler(intelligence_processor).register(in_process_dispatcher)
+        app.state.intelligence_processor = intelligence_processor
+
+    if settings.intelligence_maintenance_enabled:
+        scheduler.register(
+            MemoryIntelligenceMaintenanceJob(
+                intel_uow_factory, build_graph_repository(), in_process_dispatcher
+            ),
+            cron=settings.intelligence_cron,
+        )
+
+    # Start the scheduler once anything is registered (Stage 11 sweeps and/or the
+    # Stage 17.1 maintenance job). The live ticker only runs when
+    # ``scheduler_interval_seconds > 0``; otherwise jobs await a driver.
+    if scheduler.jobs():
         await scheduler.start()
     app.state.scheduler = scheduler
 
@@ -254,6 +301,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await consolidation_processor.drain()
         if maintenance_processor is not None:
             await maintenance_processor.drain()
+        if intelligence_processor is not None:
+            await intelligence_processor.drain()
         await scheduler.stop()
         await neo4j_manager.disconnect()
         await redis_manager.disconnect()

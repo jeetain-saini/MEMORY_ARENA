@@ -28,6 +28,10 @@ from app.application.interfaces.scheduler import ScheduledJob
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.intelligence.clustering_engine import ClusteringEngine
 from app.application.services.intelligence.forgetting_engine import ForgettingEngine
+from app.application.services.intelligence.graph_snapshot import (
+    GraphSnapshot,
+    GraphSnapshotProvider,
+)
 from app.application.services.intelligence.importance_evolution import (
     ImportanceEvolutionService,
 )
@@ -44,12 +48,18 @@ async def evolve_importance_for_user(
     graph_repo: GraphRepository,
     evolution: ImportanceEvolutionService,
     user_id: UUID,
+    *,
+    snapshot: GraphSnapshot | None = None,
 ) -> int:
     """Recompute + persist importance for a user's active memories.
 
     Graph-aware: centrality is ``degree / max-degree`` across the active set, so
     well-connected memories evolve upward. Returns the number of memories whose
     importance actually changed (idempotent — a no-op when nothing moves).
+
+    Stage 18.1: degrees come from a single batched :class:`GraphSnapshot` when
+    one is supplied; otherwise the function builds one itself (one ``get_subgraph``
+    call) instead of issuing one ``get_edges`` per memory.
     """
     async with uow_factory() as uow:
         memories = [
@@ -60,10 +70,11 @@ async def evolve_importance_for_user(
     if not memories:
         return 0
 
-    degrees: dict[UUID, int] = {}
-    for m in memories:
-        edges = await graph_repo.get_edges(str(m.id))
-        degrees[m.id] = len(edges)
+    if snapshot is None:
+        snapshot = await GraphSnapshotProvider(graph_repo).snapshot(user_id)
+    # Normalize centrality over the active set (not the whole subgraph), matching
+    # the pre-Stage-18 semantics exactly.
+    degrees = {m.id: snapshot.degree(str(m.id)) for m in memories}
     max_degree = max(degrees.values(), default=0)
 
     changed = 0
@@ -107,6 +118,7 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
     ) -> None:
         self._uow_factory = uow_factory
         self._graph = graph_repo
+        self._snapshots = GraphSnapshotProvider(graph_repo)
         self._metrics = metrics
         self._evolution = evolution or ImportanceEvolutionService()
         self._promotion = promotion or PromotionEngine(uow_factory, graph_repo, dispatcher)
@@ -127,12 +139,20 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
             # promote (creates semantic memories), cluster (includes the new
             # semantic ones), and finally forget (protect_promoted keeps the
             # freshly promoted ones).
+            #
+            # Stage 18.1: one batched subgraph read feeds importance evolution
+            # (which runs before any graph mutation). Promotion and clustering
+            # then add edges, so forgetting takes a *fresh* snapshot to see the
+            # updated topology — two get_subgraph calls per tenant in place of
+            # the previous O(N) per-memory get_edges reads.
+            pre_snapshot = await self._snapshots.snapshot(uid)
             importance += await evolve_importance_for_user(
-                self._uow_factory, self._graph, self._evolution, uid
+                self._uow_factory, self._graph, self._evolution, uid, snapshot=pre_snapshot
             )
             promoted += len(await self._promotion.promote_user(uid))
             clustered += len(await self._clustering.cluster_user(uid))
-            forgotten += len(await self._forgetting.sweep_user(uid))
+            post_snapshot = await self._snapshots.snapshot(uid)
+            forgotten += len(await self._forgetting.sweep_user(uid, snapshot=post_snapshot))
         result = IntelligenceMaintenanceResult(
             tenants=len(tenants),
             importance_changed=importance,

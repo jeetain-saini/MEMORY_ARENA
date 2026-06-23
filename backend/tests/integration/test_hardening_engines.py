@@ -164,11 +164,12 @@ def test_cluster_cleanup_removes_stale_and_preserves_other_edges() -> None:
         uowf = _factory(engine)
         graph = InMemoryGraphRepository()
 
-        # Cluster A (3 members) so it survives a member leaving; representative is
-        # the lexicographically-smallest id, which we pin to stay in A.
-        rep_id = uuid4()
-        keep_id = uuid4()
-        leaver_id = uuid4()
+        # Cluster A (3 members) so it survives a member leaving; the engine picks
+        # the lexicographically-smallest member id as the representative. Sort the
+        # ids and pin the smallest as the representative — otherwise the random
+        # uuid ordering makes the rep->keep assertion flaky (it only held when
+        # rep_id happened to sort first).
+        rep_id, keep_id, leaver_id = sorted((uuid4(), uuid4(), uuid4()), key=str)
         a_rep = Memory(id=rep_id, user_id=user, content="alpha alpha shared topic one",
                        memory_type=MemoryType.FACT)
         a_keep = Memory(id=keep_id, user_id=user, content="alpha alpha shared topic two",

@@ -19,6 +19,7 @@ from uuid import UUID
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.unit_of_work import UnitOfWork
+from app.application.services.intelligence.graph_snapshot import GraphSnapshot
 from app.domain.entities.memory import Memory
 from app.domain.value_objects.memory_status import MemoryStatus
 
@@ -52,7 +53,8 @@ class ForgettingEngine:
         self._config = config or ForgettingConfig()
 
     async def is_forgettable(
-        self, memory: Memory, *, now: datetime, config: ForgettingConfig | None = None
+        self, memory: Memory, *, now: datetime, config: ForgettingConfig | None = None,
+        snapshot: GraphSnapshot | None = None,
     ) -> bool:
         c = config or self._config
         if memory.status is not MemoryStatus.ACTIVE:
@@ -67,14 +69,19 @@ class ForgettingEngine:
         if memory.retrieval_count > c.max_retrievals:
             return False
         if c.require_isolated:
-            edges = await self._graph.get_edges(str(memory.id))
-            if edges:
+            # Stage 18.1: serve isolation from the batched snapshot when present,
+            # else fall back to a live per-memory read.
+            if snapshot is not None:
+                if not snapshot.is_isolated(str(memory.id)):
+                    return False
+            elif await self._graph.get_edges(str(memory.id)):
                 return False
         return True
 
     async def sweep_user(
         self, user_id: UUID, *, now: datetime | None = None,
         config: ForgettingConfig | None = None,
+        snapshot: GraphSnapshot | None = None,
     ) -> list[UUID]:
         """Forget all eligible memories for a user. Returns forgotten ids."""
         now = now or datetime.now(timezone.utc)
@@ -83,7 +90,7 @@ class ForgettingEngine:
 
         forgotten: list[Memory] = []
         for m in memories:
-            if await self.is_forgettable(m, now=now, config=config):
+            if await self.is_forgettable(m, now=now, config=config, snapshot=snapshot):
                 m.forget(reason="aged_out: old, low-importance, rarely-retrieved, isolated")
                 forgotten.append(m)
 

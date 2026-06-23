@@ -35,6 +35,12 @@ def _encode(value: Any) -> Any:
         return str(value)
     if isinstance(value, datetime):
         return value.isoformat()
+    # Coerce numpy scalars/arrays (e.g. pgvector embeddings) to plain Python so
+    # the snapshot stays JSON-serializable across backends.
+    if hasattr(value, "tolist"):
+        return value.tolist()
+    if value.__class__.__module__ == "numpy":
+        return value.item()
     return value
 
 
@@ -52,11 +58,19 @@ class DatabaseBackup:
     def __init__(self, engine: AsyncEngine) -> None:
         self._engine = engine
 
-    async def export(self) -> dict[str, Any]:
-        """Read every table into a JSON-serializable snapshot."""
+    async def export(self, *, exclude_tables: set[str] | None = None) -> dict[str, Any]:
+        """Read every table into a JSON-serializable snapshot.
+
+        ``exclude_tables`` skips tables that are large and regenerable (e.g.
+        ``memory_embeddings`` — vectors can be recomputed from memory content),
+        keeping a backup fast and portable.
+        """
+        skip = exclude_tables or set()
         tables: dict[str, list[dict[str, Any]]] = {}
         async with self._engine.connect() as conn:
             for table in Base.metadata.sorted_tables:
+                if table.name in skip:
+                    continue
                 result = await conn.execute(table.select())
                 tables[table.name] = [
                     {k: _encode(v) for k, v in row.items()}

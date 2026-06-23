@@ -101,8 +101,14 @@ class Vector(TypeDecorator):
         return json.dumps(list(value))
 
     def process_result_value(self, value, dialect):  # type: ignore[no-untyped-def]
-        if value is None or dialect.name == "postgresql":
-            return value
-        if isinstance(value, str):
-            return json.loads(value)
-        return value
+        if value is None:
+            return None
+        # JSON-backed dialects (SQLite) store the vector as a JSON string.
+        if dialect.name != "postgresql" and isinstance(value, str):
+            value = json.loads(value)
+        # Coerce to plain Python floats regardless of source. pgvector returns a
+        # numpy float32 array on PostgreSQL; left as-is, downstream cosine math
+        # (sum(x*y ...)) yields numpy float32 scalars that pydantic v2 cannot
+        # JSON-serialize (the "float32 is not JSON serializable" 500s). This
+        # boundary coercion eliminates numpy everywhere downstream.
+        return [float(x) for x in value]

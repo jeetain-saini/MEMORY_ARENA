@@ -95,3 +95,33 @@ def test_output_is_valid_single_line_json() -> None:
     )
     assert "\n" not in formatted
     json.loads(formatted)  # does not raise
+
+
+# --- Phase 3 hardening: connection-URL credentials in messages/tracebacks ---
+
+def test_url_credentials_redacted_in_message() -> None:
+    import logging as _logging
+    from app.core.logging import JsonFormatter
+
+    rec = _logging.LogRecord(
+        "t", _logging.ERROR, __file__, 1,
+        "connect failed: postgresql+asyncpg://memoryarena:supersecret@db:5432/app",
+        None, None,
+    )
+    out = JsonFormatter().format(rec)
+    assert "supersecret" not in out
+    assert "memoryarena:***REDACTED***@" in out
+
+
+def test_url_credentials_redacted_in_exception_traceback() -> None:
+    import logging as _logging
+    from app.core.logging import JsonFormatter
+
+    try:
+        raise ConnectionError("could not connect to redis://default:r3disPASS@cache:6379/0")
+    except ConnectionError:
+        import sys
+        rec = _logging.LogRecord("t", _logging.ERROR, __file__, 1, "boom", None, sys.exc_info())
+    out = JsonFormatter().format(rec)
+    assert "r3disPASS" not in out
+    assert "***REDACTED***" in out

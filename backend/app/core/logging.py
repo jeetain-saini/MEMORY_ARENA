@@ -47,6 +47,9 @@ _SENSITIVE_KEYS: frozenset[str] = frozenset(
 # redaction placeholder contains no whitespace, so re-matching replaces it with
 # itself.
 _BEARER_RE = re.compile(r"(?i)(bearer\s+)\S+")
+# Scrub credentials embedded in connection URLs (e.g. a DSN that surfaces in an
+# exception trace: ``postgresql://user:password@host`` -> ``...user:***@host``).
+_URL_CRED_RE = re.compile(r"(?i)([a-z][a-z0-9+.\-]*://[^:/?#\s]+:)[^@/?#\s]+(@)")
 
 
 def _is_sensitive_key(key: str) -> bool:
@@ -67,7 +70,8 @@ def _redact(value: Any) -> Any:
 
 
 def _redact_message(message: str) -> str:
-    return _BEARER_RE.sub(rf"\g<1>{_REDACTED}", message)
+    message = _BEARER_RE.sub(rf"\g<1>{_REDACTED}", message)
+    return _URL_CRED_RE.sub(rf"\g<1>{_REDACTED}\g<2>", message)
 
 # Standard LogRecord attributes we do NOT want to duplicate into the JSON "extra".
 _RESERVED_ATTRS = {
@@ -106,7 +110,9 @@ class JsonFormatter(logging.Formatter):
             "request_id": get_request_id(),
         }
         if record.exc_info:
-            payload["exception"] = self.formatException(record.exc_info)
+            # Redact credentials/tokens that may surface in a traceback (e.g. a
+            # DSN in a connection error) before it ever reaches the log sink.
+            payload["exception"] = _redact_message(self.formatException(record.exc_info))
 
         # Merge structured `extra={...}` fields the caller attached, redacting any
         # sensitive keys (and recursing into nested dict/list values).

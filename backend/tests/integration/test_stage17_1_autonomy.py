@@ -41,6 +41,7 @@ from app.infrastructure.graph.in_memory_graph_repository import InMemoryGraphRep
 from app.infrastructure.intelligence.in_process_processor import (
     InProcessIntelligenceJobProcessor,
 )
+from app.infrastructure.scheduler.in_process_scheduler import InProcessScheduler
 from tests.integration._db import make_engine, seed_user
 
 T = TypeVar("T")
@@ -183,6 +184,47 @@ def test_maintenance_job_runs_full_cycle() -> None:
         async with uowf() as uow:
             stale_after = await uow.memories.get_by_id(stale.id)
         assert stale_after.status is MemoryStatus.FORGOTTEN
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_scheduler_ticker_runs_forgetting_automatically() -> None:
+    """End-to-end autonomy proof: the interval ticker -> run_all -> maintenance
+    job -> ForgettingEngine forgets a stale memory with no manual call."""
+
+    async def scenario() -> None:
+        engine = await make_engine()
+        user = await seed_user(engine)
+        uowf = _factory(engine)
+        graph = InMemoryGraphRepository()
+        dispatcher = InProcessEventDispatcher()
+        old = datetime.now(timezone.utc) - timedelta(days=200)
+        stale = Memory(user_id=user, content="zzz obscure ancient trivia xyz",
+                       memory_type=MemoryType.FACT,
+                       score=MemoryScore(importance=0.05, utility=0.1, frequency=0.0,
+                                         recency=0.0, confidence=0.3),
+                       created_at=old, updated_at=old)
+        await _save(uowf, stale)
+
+        scheduler = InProcessScheduler(interval_seconds=0.02)
+        scheduler.register(
+            MemoryIntelligenceMaintenanceJob(uowf, graph, dispatcher), cron="0 2 * * *"
+        )
+        await scheduler.start()  # ticker starts because interval > 0
+        try:
+            for _ in range(50):  # poll up to ~1s for an automatic tick
+                await asyncio.sleep(0.02)
+                async with uowf() as uow:
+                    m = await uow.memories.get_by_id(stale.id)
+                if m.status is MemoryStatus.FORGOTTEN:
+                    break
+        finally:
+            await scheduler.stop()
+
+        async with uowf() as uow:
+            final = await uow.memories.get_by_id(stale.id)
+        assert final.status is MemoryStatus.FORGOTTEN  # forgotten by the ticker, no API call
         await engine.dispose()
 
     _run(scenario)

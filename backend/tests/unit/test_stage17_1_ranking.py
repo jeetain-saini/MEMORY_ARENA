@@ -5,11 +5,13 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from app.application.dto.retrieval_dto import RetrievalFilters
 from app.application.services.retrieval.config import RetrievalConfig
-from app.application.services.retrieval.scoring import memory_boost_score
+from app.application.services.retrieval.scoring import memory_boost_score, passes_filters
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_score import MemoryScore
 from app.domain.value_objects.memory_category import MemoryCategory
+from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 
 CFG = RetrievalConfig()
@@ -73,6 +75,17 @@ def test_cluster_membership_increases_rank() -> None:
     unclustered = _memory(score=s, cluster_id=None)
     clustered = _memory(score=s, cluster_id="abc123")
     assert memory_boost_score(clustered, CFG) > memory_boost_score(unclustered, CFG)
+
+
+# Forgotten memories disappear from retrieval --------------------------------
+def test_forgotten_memory_excluded_from_retrieval() -> None:
+    s = MemoryScore(importance=0.9, utility=0.9, frequency=0.9)
+    active = _memory(score=s)
+    forgotten = _memory(score=s)
+    forgotten.status = MemoryStatus.FORGOTTEN
+    # default filters are ACTIVE-only -> a FORGOTTEN memory never reaches ranking.
+    assert passes_filters(active, RetrievalFilters()) is True
+    assert passes_filters(forgotten, RetrievalFilters()) is False
 
 
 def test_boost_stays_in_unit_range() -> None:

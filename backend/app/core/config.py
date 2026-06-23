@@ -163,9 +163,10 @@ class Settings(BaseSettings):
     intelligence_event_enabled: bool = True
     intelligence_cron: str = "0 2 * * *"
     # >0 starts an in-process ticker that fires all scheduled jobs every N
-    # seconds (true periodic autonomy without an external driver). 0 keeps the
-    # scheduler driver-triggered only (default; unchanged behavior).
-    scheduler_interval_seconds: float = 0.0
+    # seconds (true periodic autonomy without an external driver). Default 3600
+    # (hourly) so the maintenance job — and therefore ForgettingEngine — runs
+    # automatically out of the box; set 0 to fall back to driver-only triggering.
+    scheduler_interval_seconds: float = 3600.0
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")

@@ -8,6 +8,7 @@ what Alembic autogeneration and ``create_all`` rely on. Keep all models
 re-exported here so a single import wires up the full schema.
 """
 
+from app.infrastructure.database.models.audit_log import AuditLogModel
 from app.infrastructure.database.models.memory import MemoryModel
 from app.infrastructure.database.models.memory_embedding import (
     EMBEDDING_DIM,
@@ -21,6 +22,7 @@ from app.infrastructure.database.models.user import UserModel
 
 __all__ = [
     "UserModel",
+    "AuditLogModel",
     "MemoryModel",
     "MemoryScoreModel",
     "MemoryRelationModel",

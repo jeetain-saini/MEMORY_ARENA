@@ -144,6 +144,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # cache provider with the request services.
     CacheInvalidationEventHandler(build_cache_provider()).register(in_process_dispatcher)
 
+    # --- Wire the audit trail (Stage 19.3) -------------------------------
+    # A single catch-all handler records every memory write, lifecycle
+    # transition, and intelligence action that flows through the dispatcher.
+    # In-memory by default; durable audit_log table when AUDIT_BACKEND=postgres.
+    from app.application.services.audit.audit_event_handler import AuditEventHandler
+    from app.infrastructure.audit.factory import build_audit_log
+
+    audit_log = build_audit_log(lambda: postgres_manager.sessionmaker())
+    AuditEventHandler(audit_log).register(in_process_dispatcher)
+    app.state.audit_log = audit_log
+
     # --- Wire the event-driven knowledge-graph sync ----------------------
     # Sync runs off the request path via a background job processor (mirrors
     # the embedding pipeline), drained on shutdown for graceful completion.

@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _CACHE_BACKENDS = {"noop", "memory", "redis"}
 _VECTOR_SEARCH_MODES = {"scan", "hnsw", "auto"}
 _LOCK_BACKENDS = {"memory", "redis"}
+_AUDIT_BACKENDS = {"memory", "postgres"}
 
 Environment = Literal["development", "staging", "production"]
 
@@ -187,6 +188,11 @@ class Settings(BaseSettings):
     # the ceiling. Keep <= the DB connection pool size. Default 1 = sequential
     # (safe for a single shared connection, e.g. SQLite); raise it on Postgres.
     intelligence_max_concurrency: int = 1
+    # --- Audit logging (Stage 19.3) ---------------------------------------
+    # Where the audit trail is written: "memory" (default; process-local) or
+    # "postgres" (durable audit_log table). Auditing of writes/lifecycle/
+    # intelligence actions is always active; this only selects the sink.
+    audit_backend: str = "memory"
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
@@ -305,6 +311,14 @@ class Settings(BaseSettings):
         backend = value.lower()
         if backend not in _LOCK_BACKENDS:
             raise ValueError(f"lock_backend must be one of {sorted(_LOCK_BACKENDS)}")
+        return backend
+
+    @field_validator("audit_backend")
+    @classmethod
+    def _validate_audit_backend(cls, value: str) -> str:
+        backend = value.lower()
+        if backend not in _AUDIT_BACKENDS:
+            raise ValueError(f"audit_backend must be one of {sorted(_AUDIT_BACKENDS)}")
         return backend
 
     @model_validator(mode="after")

@@ -174,9 +174,10 @@ def test_every_protected_route_is_covered() -> None:
         "/api/v1/memories/{memory_id}",          # by-id: covered at service level
         "/api/v1/graph/memory/{memory_id}",      # by-id: covered above
         "/api/v1/graph/traverse",                # by-id: covered above
-        # Aggregate, non-user-scoped operational endpoint (no user_id; exposes
+        # Aggregate, non-user-scoped operational endpoints (no user_id; expose
         # only process-wide counters/latencies) — like /health, not user-scoped.
         "/api/v1/observability/metrics",
+        "/api/v1/observability/prometheus",  # Phase 4: Prometheus scrape target
     }
     discovered = {
         route.path

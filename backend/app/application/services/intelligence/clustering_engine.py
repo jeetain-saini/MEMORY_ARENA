@@ -92,15 +92,57 @@ class ClusteringEngine:
         def union(a: UUID, b: UUID) -> None:
             parent[find(a)] = find(b)
 
-        for i, a in enumerate(memories):
-            for b in memories[i + 1 :]:
-                if sigs[a.id] and sigs[b.id] and jaccard(sigs[a.id], sigs[b.id]) >= self._config.min_overlap:
-                    union(a.id, b.id)
+        # Stage 18.2: candidate generation via a token->memories inverted index.
+        # Two memories can only link if their token Jaccard clears min_overlap,
+        # and (for min_overlap > 0) that requires sharing at least one significant
+        # token — so only pairs that co-occur in some token's postings list are
+        # ever compared. This drops the worst-case O(n^2) all-pairs scan to the
+        # number of token-sharing pairs, which is what drives merge/split/rebalance
+        # incrementally as content changes, while producing *identical* components
+        # to the exhaustive scan. min_overlap <= 0 is degenerate (everything links
+        # regardless of shared tokens), so it keeps the exhaustive path.
+        if self._config.min_overlap <= 0:
+            pairs = (
+                (a.id, b.id)
+                for i, a in enumerate(memories)
+                for b in memories[i + 1 :]
+            )
+        else:
+            inverted: dict[str, list[UUID]] = {}
+            for m in memories:
+                for token in sigs[m.id]:
+                    inverted.setdefault(token, []).append(m.id)
+            pairs = self._candidate_pairs(inverted)
+
+        comparisons = 0
+        for a_id, b_id in pairs:
+            if find(a_id) == find(b_id):
+                continue  # already in the same component — no need to compare
+            if not (sigs[a_id] and sigs[b_id]):
+                continue
+            comparisons += 1
+            if jaccard(sigs[a_id], sigs[b_id]) >= self._config.min_overlap:
+                union(a_id, b_id)
+        if self._metrics is not None:
+            self._metrics.incr("clustering.pair_comparisons_total", comparisons)
 
         groups: dict[UUID, list[Memory]] = {}
         for m in memories:
             groups.setdefault(find(m.id), []).append(m)
         return list(groups.values())
+
+    @staticmethod
+    def _candidate_pairs(inverted: dict[str, list[UUID]]):
+        """Yield each unordered memory pair that shares >=1 token, exactly once."""
+        seen: set[tuple[UUID, UUID]] = set()
+        for ids in inverted.values():
+            for i in range(len(ids)):
+                for j in range(i + 1, len(ids)):
+                    a, b = ids[i], ids[j]
+                    key = (a, b) if str(a) < str(b) else (b, a)
+                    if key not in seen:
+                        seen.add(key)
+                        yield key
 
     async def _materialize(
         self, members: list[Memory], sigs: dict[UUID, set[str]]

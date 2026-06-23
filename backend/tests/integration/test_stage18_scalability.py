@@ -28,6 +28,12 @@ from app.application.dto.graph_dto import (
     GraphOverview,
     NodeType,
 )
+from app.application.services.context._text import jaccard
+from app.application.services.intelligence.clustering_engine import (
+    ClusterConfig,
+    ClusteringEngine,
+    _sig,
+)
 from app.application.services.intelligence.forgetting_engine import (
     ForgettingConfig,
     ForgettingEngine,
@@ -51,6 +57,7 @@ from app.infrastructure.database.session import create_session_factory
 from app.infrastructure.database.unit_of_work import SQLAlchemyUnitOfWork
 from app.infrastructure.events.in_process_dispatcher import InProcessEventDispatcher
 from app.infrastructure.graph.in_memory_graph_repository import InMemoryGraphRepository
+from app.infrastructure.observability.in_memory_metrics import InMemoryMetricsSink
 from tests.integration._db import make_engine, seed_user
 
 T = TypeVar("T")
@@ -221,6 +228,170 @@ def test_evolve_importance_standalone_builds_its_own_snapshot() -> None:
         assert changed >= 0                     # idempotent-safe
         assert graph.get_subgraph_calls == 1    # built its own snapshot
         assert graph.get_edges_calls == 0       # no per-memory reads
+        await engine.dispose()
+
+    _run(scenario)
+
+
+# --- 3. incremental clustering (Stage 18.2) --------------------------------
+
+def _bruteforce_components(memories: list[Memory]) -> list[set[UUID]]:
+    """Reference O(n^2) connected-components partition (the pre-18.2 algorithm)."""
+    sigs = {m.id: _sig(m.content) for m in memories}
+    parent = {m.id: m.id for m in memories}
+
+    def find(x: UUID) -> UUID:
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for i, a in enumerate(memories):
+        for b in memories[i + 1:]:
+            if sigs[a.id] and sigs[b.id] and jaccard(sigs[a.id], sigs[b.id]) >= 0.2:
+                parent[find(a.id)] = find(b.id)
+    groups: dict[UUID, set[UUID]] = {}
+    for m in memories:
+        groups.setdefault(find(m.id), set()).add(m.id)
+    return [g for g in groups.values() if len(g) >= 2]
+
+
+async def _clustered_partition(uowf, user: UUID) -> list[set[UUID]]:
+    """The engine's actual partition, read back from each memory's cluster_id."""
+    async with uowf() as uow:
+        memories = await uow.memories.list_for_analytics(user)
+    by_cluster: dict[str, set[UUID]] = {}
+    for m in memories:
+        cid = m.metadata.get("cluster_id")
+        if cid:
+            by_cluster.setdefault(cid, set()).add(m.id)
+    return [ids for ids in by_cluster.values() if len(ids) >= 2]
+
+
+def _norm(parts: list[set[UUID]]) -> set[frozenset[UUID]]:
+    return {frozenset(p) for p in parts}
+
+
+def test_clustering_inverted_index_matches_bruteforce() -> None:
+    async def scenario() -> None:
+        engine = await make_engine()
+        user = await seed_user(engine)
+        uowf = _factory(engine)
+        graph = InMemoryGraphRepository()
+
+        contents = [
+            "python asyncio await coroutine",     # cluster X
+            "python asyncio event loop",          # cluster X
+            "neo4j cypher graph traversal",       # cluster Y
+            "neo4j cypher query plan",            # cluster Y
+            "totally unrelated solitary subject", # singleton
+            "python asyncio await future",        # cluster X (bridges via shared tokens)
+        ]
+        memories = []
+        for c in contents:
+            m = Memory.create(user_id=user, content=c, memory_type=MemoryType.FACT)
+            memories.append(m)
+            await _save(uowf, m)
+
+        await ClusteringEngine(uowf, graph, ClusterConfig(min_overlap=0.2)).cluster_user(user)
+
+        expected = _norm(_bruteforce_components(memories))
+        actual = _norm(await _clustered_partition(uowf, user))
+        assert actual == expected
+        assert any(len(p) >= 3 for p in expected)  # the python/asyncio group
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_clustering_skips_pairs_with_no_shared_tokens() -> None:
+    """Disjoint-token memories trigger zero Jaccard comparisons (vs O(n^2) brute force)."""
+    async def scenario() -> None:
+        engine = await make_engine()
+        user = await seed_user(engine)
+        uowf = _factory(engine)
+        graph = InMemoryGraphRepository()
+        metrics = InMemoryMetricsSink()
+
+        # 8 memories with entirely distinct vocabularies — no two share a token.
+        words = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"]
+        for w in words:
+            await _save(uowf, Memory.create(user_id=user, content=f"{w}{w} {w}xx",
+                                            memory_type=MemoryType.FACT))
+
+        ce = ClusteringEngine(uowf, graph, ClusterConfig(min_overlap=0.2), metrics=metrics)
+        await ce.cluster_user(user)
+
+        comparisons = metrics.snapshot().counters.get("clustering.pair_comparisons_total", 0)
+        # The exhaustive scan would have made 8*7/2 = 28 comparisons; the inverted
+        # index makes none, since no pair shares a token.
+        assert comparisons == 0
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_clustering_merges_when_bridge_memory_appears() -> None:
+    async def scenario() -> None:
+        engine = await make_engine()
+        user = await seed_user(engine)
+        uowf = _factory(engine)
+        graph = InMemoryGraphRepository()
+        ce = ClusteringEngine(uowf, graph, ClusterConfig(min_overlap=0.2))
+
+        # Two disjoint clusters.
+        for _ in range(2):
+            await _save(uowf, Memory.create(user_id=user, content="apple banana cherry",
+                                            memory_type=MemoryType.FACT))
+        for _ in range(2):
+            await _save(uowf, Memory.create(user_id=user, content="delta echo foxtrot",
+                                            memory_type=MemoryType.FACT))
+        await ce.cluster_user(user)
+        first = await _clustered_partition(uowf, user)
+        assert len(first) == 2  # two separate clusters
+
+        # A bridge memory sharing tokens with both clusters merges them.
+        await _save(uowf, Memory.create(user_id=user, content="apple banana delta echo",
+                                        memory_type=MemoryType.FACT))
+        await ce.cluster_user(user)
+        merged = await _clustered_partition(uowf, user)
+        assert len(merged) == 1               # one merged cluster
+        assert len(next(iter(merged))) == 5   # all five members
+        await engine.dispose()
+
+    _run(scenario)
+
+
+def test_clustering_splits_when_bridge_changes_topic() -> None:
+    async def scenario() -> None:
+        engine = await make_engine()
+        user = await seed_user(engine)
+        uowf = _factory(engine)
+        graph = InMemoryGraphRepository()
+        ce = ClusteringEngine(uowf, graph, ClusterConfig(min_overlap=0.2))
+
+        a1 = Memory.create(user_id=user, content="apple banana cherry", memory_type=MemoryType.FACT)
+        a2 = Memory.create(user_id=user, content="apple banana cherry", memory_type=MemoryType.FACT)
+        b1 = Memory.create(user_id=user, content="delta echo foxtrot", memory_type=MemoryType.FACT)
+        b2 = Memory.create(user_id=user, content="delta echo foxtrot", memory_type=MemoryType.FACT)
+        bridge = Memory.create(user_id=user, content="apple banana delta echo",
+                               memory_type=MemoryType.FACT)
+        for m in (a1, a2, b1, b2, bridge):
+            await _save(uowf, m)
+
+        await ce.cluster_user(user)
+        assert len(await _clustered_partition(uowf, user)) == 1  # merged via bridge
+
+        # The bridge changes topic entirely -> the cluster splits back into two.
+        async with uowf() as uow:
+            m = await uow.memories.get_by_id(bridge.id)
+            m.update_content("zzz unrelated solitary subject qqq")
+            await uow.memories.update(m)
+            await uow.commit()
+        await ce.cluster_user(user)
+        split = await _clustered_partition(uowf, user)
+        assert len(split) == 2                       # two clusters again
+        assert all(len(p) == 2 for p in split)       # {a1,a2} and {b1,b2}
         await engine.dispose()
 
     _run(scenario)

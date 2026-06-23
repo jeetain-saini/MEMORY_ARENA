@@ -266,10 +266,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.intelligence_processor = intelligence_processor
 
     if settings.intelligence_maintenance_enabled:
+        # Stage 18.3: run the periodic cycle under a distributed lock so only one
+        # instance executes maintenance per tick (no-op single-owner by default;
+        # cross-instance when LOCK_BACKEND=redis).
+        from app.infrastructure.locks.factory import build_distributed_lock
+        from app.infrastructure.observability.monotonic_clock import MonotonicClock
+
         scheduler.register(
             MemoryIntelligenceMaintenanceJob(
                 intel_uow_factory, build_graph_repository(), in_process_dispatcher,
                 metrics=build_metrics_sink(),
+                lock=build_distributed_lock(MonotonicClock()),
+                lock_key=settings.intelligence_lock_key,
+                lock_ttl_seconds=settings.intelligence_lock_ttl_seconds,
             ),
             cron=settings.intelligence_cron,
         )

@@ -21,12 +21,14 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from uuid import UUID
 
+from app.application.interfaces.distributed_lock import DistributedLock
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.interfaces.metrics_sink import MetricsSink
 from app.application.interfaces.scheduler import ScheduledJob
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.services.intelligence.clustering_engine import ClusteringEngine
+from app.application.services.locking import LockLease, single_owner
 from app.application.services.intelligence.forgetting_engine import ForgettingEngine
 from app.application.services.intelligence.graph_snapshot import (
     GraphSnapshot,
@@ -115,11 +117,17 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
         forgetting: ForgettingEngine | None = None,
         clustering: ClusteringEngine | None = None,
         metrics: MetricsSink | None = None,
+        lock: DistributedLock | None = None,
+        lock_key: str = "intelligence:maintenance",
+        lock_ttl_seconds: int = 300,
     ) -> None:
         self._uow_factory = uow_factory
         self._graph = graph_repo
         self._snapshots = GraphSnapshotProvider(graph_repo)
         self._metrics = metrics
+        self._lock = lock
+        self._lock_key = lock_key
+        self._lock_ttl = lock_ttl_seconds
         self._evolution = evolution or ImportanceEvolutionService()
         self._promotion = promotion or PromotionEngine(uow_factory, graph_repo, dispatcher)
         self._forgetting = forgetting or ForgettingEngine(uow_factory, graph_repo, dispatcher)
@@ -128,9 +136,30 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
         )
 
     async def run(self) -> None:
-        await self.run_cycle()
+        """Scheduler entry point — runs one all-tenant cycle under the lock.
 
-    async def run_cycle(self, *, user_id: UUID | None = None) -> IntelligenceMaintenanceResult:
+        Stage 18.3: when a distributed lock is configured, the cycle runs only on
+        the single instance that holds ``lock_key``; other instances skip this
+        tick. The lease is renewed between tenants so a long cycle keeps ownership,
+        and is released on exit (a crashed owner's lease lapses on its TTL). With
+        no lock configured the behavior is unchanged (single-process default).
+        """
+        if self._lock is None:
+            await self.run_cycle()
+            return
+        async with single_owner(
+            self._lock, self._lock_key, ttl_seconds=self._lock_ttl
+        ) as lease:
+            if lease is None:
+                _logger.info("intelligence.maintenance.skipped_lock_held")
+                if self._metrics is not None:
+                    self._metrics.incr("intelligence_maintenance_skipped_total")
+                return
+            await self.run_cycle(lease=lease)
+
+    async def run_cycle(
+        self, *, user_id: UUID | None = None, lease: LockLease | None = None
+    ) -> IntelligenceMaintenanceResult:
         """Run one full evolution cycle for one tenant (or all tenants)."""
         tenants = await self._tenants(user_id)
         importance = promoted = clustered = forgotten = 0
@@ -153,6 +182,12 @@ class MemoryIntelligenceMaintenanceJob(ScheduledJob):
             clustered += len(await self._clustering.cluster_user(uid))
             post_snapshot = await self._snapshots.snapshot(uid)
             forgotten += len(await self._forgetting.sweep_user(uid, snapshot=post_snapshot))
+            # Stage 18.3: keep the lease alive across a long multi-tenant cycle. If
+            # ownership was lost (e.g. our lease lapsed and another instance took
+            # over), stop rather than keep mutating under a lock we no longer hold.
+            if lease is not None and not await lease.renew():
+                _logger.warning("intelligence.maintenance.lease_lost", extra={"tenant": str(uid)})
+                break
         result = IntelligenceMaintenanceResult(
             tenants=len(tenants),
             importance_changed=importance,

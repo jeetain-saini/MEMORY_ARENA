@@ -17,6 +17,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Allowed values for the Stage 14 backend-selection flags.
 _CACHE_BACKENDS = {"noop", "memory", "redis"}
 _VECTOR_SEARCH_MODES = {"scan", "hnsw", "auto"}
+_LOCK_BACKENDS = {"memory", "redis"}
 
 Environment = Literal["development", "staging", "production"]
 
@@ -170,6 +171,16 @@ class Settings(BaseSettings):
     # Legacy "run every N seconds ignoring cron" driver; kept for dev/tests only.
     # 0 by default — cron mode above is the production driver.
     scheduler_interval_seconds: float = 0.0
+    # --- Distributed locking (Stage 18.3) ---------------------------------
+    # Coordinates single-owner maintenance across instances: "memory" (default;
+    # process-local, no Redis) | "redis" (cross-instance lease). The periodic
+    # intelligence maintenance job runs under this lock so only one owner per
+    # ``intelligence_lock_key`` executes a cycle at a time.
+    lock_backend: str = "memory"
+    intelligence_lock_key: str = "intelligence:maintenance"
+    # Lease TTL for the maintenance lock; renewed between tenants so a long cycle
+    # keeps ownership, while a crashed owner's lease lapses and frees the lock.
+    intelligence_lock_ttl_seconds: int = 300
 
     # --- Security ----------------------------------------------------------
     jwt_secret: str = Field(..., min_length=16, description="JWT signing secret")
@@ -281,6 +292,14 @@ class Settings(BaseSettings):
         if mode not in _VECTOR_SEARCH_MODES:
             raise ValueError(f"vector_search_mode must be one of {sorted(_VECTOR_SEARCH_MODES)}")
         return mode
+
+    @field_validator("lock_backend")
+    @classmethod
+    def _validate_lock_backend(cls, value: str) -> str:
+        backend = value.lower()
+        if backend not in _LOCK_BACKENDS:
+            raise ValueError(f"lock_backend must be one of {sorted(_LOCK_BACKENDS)}")
+        return backend
 
     @model_validator(mode="after")
     def _validate_production_profile(self) -> "Settings":

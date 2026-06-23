@@ -9,7 +9,8 @@ development); validation fails fast at startup rather than deep inside a request
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +20,38 @@ _CACHE_BACKENDS = {"noop", "memory", "redis"}
 _VECTOR_SEARCH_MODES = {"scan", "hnsw", "auto"}
 _LOCK_BACKENDS = {"memory", "redis"}
 _AUDIT_BACKENDS = {"memory", "postgres"}
+
+# Stage 19.4 — secrets management. Fields whose values must never be logged or
+# echoed, and URL fields whose embedded credentials must be redacted.
+_SECRET_FIELDS = {
+    "jwt_secret", "neo4j_password", "openai_api_key", "anthropic_api_key",
+    "nvidia_api_key", "langsmith_api_key",
+}
+_URL_FIELDS = {"postgres_url", "redis_url", "neo4j_uri"}
+# Placeholder secrets that must not survive into a production deployment.
+_INSECURE_SECRETS = {"neo4j", "password", "changeme", "change-me", "admin", ""}
+
+
+def mask_secret(value: Any) -> str | None:
+    """Mask a secret for safe display: keep nothing but a length hint."""
+    if value is None:
+        return None
+    text = str(value)
+    return "***redacted***" if text else ""
+
+
+def redact_url_credentials(url: str) -> str:
+    """Return ``url`` with any embedded ``user:password@`` credentials masked."""
+    try:
+        parts = urlsplit(url)
+    except ValueError:
+        return "***redacted***"
+    if not parts.hostname or "@" not in parts.netloc:
+        return url
+    host = parts.hostname or ""
+    port = f":{parts.port}" if parts.port else ""
+    netloc = f"***:***@{host}{port}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
 
 Environment = Literal["development", "staging", "production"]
 
@@ -340,7 +373,30 @@ class Settings(BaseSettings):
                 "Wildcard CORS origin '*' is not allowed in production when "
                 "cors_allow_credentials is true"
             )
+        # Stage 19.4: refuse to start in production with placeholder secrets, so a
+        # forgotten default can never reach a real deployment.
+        if self.neo4j_password in _INSECURE_SECRETS:
+            raise ValueError("NEO4J_PASSWORD must not be a default/placeholder in production")
+        if self.llm_provider == "nvidia" and not self.nvidia_api_key:
+            raise ValueError("NVIDIA_API_KEY is required when LLM_PROVIDER=nvidia in production")
         return self
+
+    def redacted(self) -> dict[str, Any]:
+        """Settings as a dict with secret-bearing values masked (Stage 19.4).
+
+        Safe to log or expose via a diagnostics endpoint: every secret field and
+        every credential embedded in a connection URL is replaced with a masked
+        placeholder, so a config dump never leaks a secret.
+        """
+        out: dict[str, Any] = {}
+        for name, value in self.model_dump().items():
+            if name in _SECRET_FIELDS:
+                out[name] = mask_secret(value)
+            elif name in _URL_FIELDS and isinstance(value, str):
+                out[name] = redact_url_credentials(value)
+            else:
+                out[name] = value
+        return out
 
 
 @lru_cache(maxsize=1)

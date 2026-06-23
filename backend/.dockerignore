@@ -1,0 +1,37 @@
+# Keep secrets, local state, and dev cruft OUT of the backend image.
+# The Dockerfile does `COPY . .` with build context ./backend, so anything not
+# excluded here is baked into the image layer.
+
+# --- Secrets / local config (NEVER bake into an image) ---------------------
+.env
+.env.*
+*.env
+
+# --- Python caches / build artifacts ---------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# --- Virtualenvs -----------------------------------------------------------
+.venv/
+venv/
+env/
+
+# --- Tests & coverage (not needed at runtime) ------------------------------
+tests/
+.coverage
+htmlcov/
+
+# --- VCS / editor / OS -----------------------------------------------------
+.git/
+.gitignore
+.idea/
+.vscode/
+*.log
+.DS_Store

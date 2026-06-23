@@ -18,6 +18,7 @@ from app.domain.entities.memory_summary import MemorySummary
 from app.domain.entities.memory_version import MemoryVersion
 from app.domain.entities.user import User
 from app.domain.value_objects.memory_category import MemoryCategory, default_category
+from app.domain.value_objects.role import Role
 from app.domain.value_objects.memory_status import MemoryStatus
 from app.domain.value_objects.memory_type import MemoryType
 from app.domain.value_objects.relation_type import RelationType
@@ -39,6 +40,7 @@ def user_to_model(user: User) -> UserModel:
         password_hash=user.password_hash,
         is_active=user.is_active,
         tenant_id=user.tenant_id,
+        role=user.role.value,
     )
 
 
@@ -50,6 +52,7 @@ def model_to_user(model: UserModel) -> User:
         password_hash=model.password_hash,
         is_active=model.is_active,
         tenant_id=model.tenant_id,
+        role=Role.from_str(getattr(model, "role", None)),
         created_at=model.created_at,
         updated_at=model.updated_at,
     )

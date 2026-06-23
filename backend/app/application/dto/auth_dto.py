@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from enum import Enum
 from uuid import UUID
 
+from app.domain.value_objects.role import Role
+
 
 @dataclass(frozen=True)
 class RegisterCommand:
@@ -45,6 +47,13 @@ class AuthPrincipal:
 
     user_id: UUID
     tenant_id: UUID
+    # RBAC role (Stage 19.1). Sourced from the user record on each request, so a
+    # role change takes effect immediately. Defaults to USER for least privilege.
+    role: Role = Role.USER
+
+    @property
+    def is_admin(self) -> bool:
+        return self.role is Role.ADMIN
 
 
 @dataclass(frozen=True)

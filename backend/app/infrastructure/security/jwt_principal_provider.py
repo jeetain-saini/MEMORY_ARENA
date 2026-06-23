@@ -37,4 +37,4 @@ class JwtPrincipalProvider(PrincipalProvider):
             user = await uow.users.get_by_id(claims.user_id)
         if user is None or not user.is_active or user.tenant_id is None:
             raise AuthenticationError()
-        return AuthPrincipal(user_id=user.id, tenant_id=user.tenant_id)
+        return AuthPrincipal(user_id=user.id, tenant_id=user.tenant_id, role=user.role)

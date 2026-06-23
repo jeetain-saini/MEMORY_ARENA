@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from app.domain.exceptions.errors import DomainError
+from app.domain.value_objects.role import Role
 
 
 def _utcnow() -> datetime:
@@ -37,6 +38,9 @@ class User:
     # invariant "every user has a non-null tenant_id" holds after construction
     # (including rehydration from the database via the mapper).
     tenant_id: UUID | None = None
+    # RBAC role (Stage 19.1). Defaults to USER (least privilege), so every
+    # account created or rehydrated before roles existed is a plain user.
+    role: Role = Role.USER
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
 

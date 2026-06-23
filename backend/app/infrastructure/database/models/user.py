@@ -29,3 +29,9 @@ class UserModel(TimestampMixin, SoftDeleteMixin, Base):
         default=lambda ctx: ctx.get_current_parameters()["id"],
         index=True,
     )
+    # RBAC role (Stage 19.1). NOT NULL with a "user" default/server_default, so
+    # existing rows and inserts that omit it are least-privilege users (matching
+    # the migration backfill and the domain default).
+    role: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="user", server_default="user"
+    )

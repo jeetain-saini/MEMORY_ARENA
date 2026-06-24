@@ -14,13 +14,17 @@ from uuid import UUID
 
 from fastapi import APIRouter
 
+from fastapi import Depends
+
 from app.api.v1.dependencies.providers import (
     CurrentPrincipalDep,
     GraphAwareRetrievalServiceDep,
     GraphRepositoryDep,
     GraphTraversalServiceDep,
+    get_app_settings,
 )
 from app.application.dto.auth_dto import AuthPrincipal
+from app.core.config import Settings
 from app.application.interfaces.graph_repository import GraphRepository
 from app.application.services.authorization import authorize_owner
 from app.application.exceptions import ResourceNotFoundForCaller
@@ -113,11 +117,13 @@ async def graph_overview(
     user_id: UUID,
     repository: GraphRepository = GraphRepositoryDep,
     principal: AuthPrincipal | None = CurrentPrincipalDep,
+    settings: Settings = Depends(get_app_settings),
 ) -> APIResponse[GraphOverviewSchema]:
     # A caller may only view their own graph (no-op when auth is disabled).
     if principal is not None:
         authorize_owner(principal, user_id)
-    overview = await repository.get_subgraph(user_id)
+    # Large-graph protection: cap the overview payload (maintenance is uncapped).
+    overview = await repository.get_subgraph(user_id, limit=settings.graph_overview_max_nodes)
     return APIResponse(
         data=GraphOverviewSchema.from_dto(user_id, overview), request_id=get_request_id()
     )

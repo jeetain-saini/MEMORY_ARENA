@@ -212,6 +212,12 @@ class Settings(BaseSettings):
     # ~slow datastore boot (depends_on healthchecks usually make this a no-op).
     startup_max_attempts: int = 10
     startup_backoff_base_seconds: float = 0.5
+    # Max accepted request body size (bytes); larger requests get 413 before the
+    # body is read. Defends against memory exhaustion from unbounded payloads.
+    max_request_body_bytes: int = 1_048_576  # 1 MiB
+    # Cap on nodes returned by the graph-overview API (large-graph protection); the
+    # maintenance snapshot is uncapped (it needs the full subgraph).
+    graph_overview_max_nodes: int = 2000
 
     # --- Distributed locking (Stage 18.3) ---------------------------------
     # Coordinates single-owner maintenance across instances: "memory" (default;

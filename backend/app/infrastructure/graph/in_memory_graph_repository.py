@@ -119,8 +119,12 @@ class InMemoryGraphRepository(GraphRepository):
         return paths
 
     # --- overview ---------------------------------------------------------
-    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
+    async def get_subgraph(self, user_id: UUID, *, limit: int | None = None) -> GraphOverview:
         ids = self._user_node_ids(user_id)
+        if limit is not None:
+            # Deterministic cap: keep the first ``limit`` node ids (sorted) so the
+            # overview is bounded and stable.
+            ids = set(sorted(ids)[:limit])
         nodes = [self._nodes[i] for i in ids]
         edges = [
             e for e in self._edges.values() if e.source_id in ids and e.target_id in ids

@@ -161,17 +161,33 @@ class Neo4jGraphRepository(GraphRepository):
         return paths
 
     # --- overview (Stage 16 graph explorer) -------------------------------
-    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
+    async def get_subgraph(self, user_id: UUID, *, limit: int | None = None) -> GraphOverview:
         uid = str(user_id)
-        node_records = await self._run(
-            "MATCH (n:MemoryNode {user_id: $uid}) RETURN n", uid=uid
-        )
-        edge_records = await self._run(
-            "MATCH (a:MemoryNode {user_id: $uid})-[r]->(b:MemoryNode {user_id: $uid}) "
-            "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
-            "type(r) AS t, r.weight AS w, properties(r) AS p",
-            uid=uid,
-        )
+        if limit is None:
+            node_records = await self._run(
+                "MATCH (n:MemoryNode {user_id: $uid}) RETURN n", uid=uid
+            )
+            edge_records = await self._run(
+                "MATCH (a:MemoryNode {user_id: $uid})-[r]->(b:MemoryNode {user_id: $uid}) "
+                "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
+                "type(r) AS t, r.weight AS w, properties(r) AS p",
+                uid=uid,
+            )
+        else:
+            # Large-graph protection: cap nodes at the DB (deterministic ORDER BY)
+            # and only return edges among the capped node set.
+            node_records = await self._run(
+                "MATCH (n:MemoryNode {user_id: $uid}) RETURN n ORDER BY n.id LIMIT $lim",
+                uid=uid, lim=limit,
+            )
+            ids = [rec["n"]["id"] for rec in node_records]
+            edge_records = await self._run(
+                "MATCH (a:MemoryNode)-[r]->(b:MemoryNode) "
+                "WHERE a.id IN $ids AND b.id IN $ids "
+                "RETURN startNode(r).id AS src, endNode(r).id AS dst, "
+                "type(r) AS t, r.weight AS w, properties(r) AS p",
+                ids=ids,
+            )
         return GraphOverview(
             nodes=[self._to_node(rec["n"]) for rec in node_records],
             edges=[self._to_edge(rec) for rec in edge_records],

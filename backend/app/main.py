@@ -61,6 +61,7 @@ from app.core.config import Settings, get_settings
 from app.core.exceptions import register_exception_handlers
 from app.core.logging import RequestContextLogMiddleware, configure_logging
 from app.core.startup import await_healthy
+from app.api.v1.middleware.body_limit import BodySizeLimitMiddleware
 from app.infrastructure.cache.factory import build_cache_provider
 from app.infrastructure.cache.redis import redis_manager
 from app.infrastructure.database.postgres import postgres_manager
@@ -380,7 +381,13 @@ def create_app() -> FastAPI:
     # Stash settings on app.state so the lifespan and overrides can reach them.
     app.state.settings = settings
 
-    # Middleware (outermost first): CORS, then request-context logging.
+    # Middleware. add_middleware prepends, so the LAST added is outermost: the
+    # request-context logger wraps everything, then CORS (so even a 413 carries
+    # CORS headers), then the body-size guard (rejects oversized payloads before
+    # any handler reads them).
+    app.add_middleware(
+        BodySizeLimitMiddleware, max_bytes=settings.max_request_body_bytes
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,

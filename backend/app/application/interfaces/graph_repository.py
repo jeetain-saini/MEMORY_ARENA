@@ -65,8 +65,13 @@ class GraphRepository(ABC):
 
     # --- overview (Stage 16 graph explorer) -------------------------------
     @abstractmethod
-    async def get_subgraph(self, user_id: UUID) -> GraphOverview:
-        """All of a tenant's nodes plus the edges among them (one payload)."""
+    async def get_subgraph(self, user_id: UUID, *, limit: int | None = None) -> GraphOverview:
+        """A tenant's nodes plus the edges among them (one payload).
+
+        ``limit`` caps the number of nodes returned (and the edges to those among
+        the inflated set) — large-graph protection for the overview API. ``None``
+        (default) returns the full subgraph, which the maintenance snapshot needs.
+        """
 
     # --- counts (Stage 13 observability: graph density) -------------------
     @abstractmethod

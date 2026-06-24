@@ -29,6 +29,21 @@ from app.application.use_cases.memory_use_cases import (
 from app.domain.entities.memory import Memory
 from app.domain.entities.memory_score import MemoryScore
 from app.domain.entities.memory_version import MemoryVersion
+from app.domain.entities.user import User
+
+
+async def _ensure_user(uow: UnitOfWork, user_id: UUID) -> None:
+    """Provision the active user if it has no ``users`` row yet.
+
+    In no-auth mode the frontend chooses an arbitrary ``user_id`` (localStorage /
+    env default) that was never registered, so every memory insert would violate
+    the ``memories.user_id -> users.id`` foreign key and the (background) write
+    would fail silently — memories from the Agent Playground never appeared.
+    Creating the user on first write makes "talk to it and it remembers" work for
+    any id. Idempotent and a no-op when the user already exists (e.g. auth mode).
+    """
+    if await uow.users.get_by_id(user_id) is None:
+        await uow.users.add(User(id=user_id, email=f"{user_id}@memoryarena.local"))
 
 
 class CreateMemoryUseCaseImpl(CreateMemoryUseCase):
@@ -45,6 +60,7 @@ class CreateMemoryUseCaseImpl(CreateMemoryUseCase):
             score=_initial_score(request),
         )
         async with self._uow as uow:
+            await _ensure_user(uow, request.user_id)
             await uow.memories.save(memory)
             await uow.commit()
         await self._dispatcher.dispatch(memory.pull_events())

@@ -79,6 +79,28 @@ services:
       - memoryarena-net
 
   # ---------------------------------------------------------------------------
+  # Schema migration (one-shot) — runs `alembic upgrade head` to the latest
+  # revision, then exits. The backend waits for this to complete successfully so
+  # it never serves against an un-migrated schema (AUTO_CREATE_SCHEMA stays off
+  # for Postgres). Shares the backend image and the service-name datastore URL.
+  # ---------------------------------------------------------------------------
+  migrate:
+    build:
+      context: ./backend
+      dockerfile: ../infrastructure/docker/backend/Dockerfile
+    container_name: memoryarena-migrate
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    environment:
+      POSTGRES_URL: postgresql+asyncpg://${POSTGRES_USER:-memoryarena}:${POSTGRES_PASSWORD:-memoryarena}@postgres:5432/${POSTGRES_DB:-memoryarena}
+      JWT_SECRET: ${JWT_SECRET:-local-dev-secret-not-for-production-1234}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - memoryarena-net
+
+  # ---------------------------------------------------------------------------
   # Backend (FastAPI) — Stage 1 application foundation.
   # ---------------------------------------------------------------------------
   backend:
@@ -117,6 +139,8 @@ services:
     ports:
       - "${APP_PORT:-8000}:8000"
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       postgres:
         condition: service_healthy
       neo4j:

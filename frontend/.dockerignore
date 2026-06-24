@@ -1,0 +1,21 @@
+# Keep dev state and build caches out of the frontend image (the Dockerfile does
+# `COPY . .`; node_modules is provided by the deps stage, .next is rebuilt).
+node_modules/
+.next/
+out/
+npm-debug.log*
+yarn-error.log*
+
+# Local dev env. NEXT_PUBLIC_* values are public (inlined into the client bundle),
+# but they often point at a dev backend (localhost) that differs from production —
+# the deploy supplies the right values at build time, so don't bake the dev ones.
+.env.local
+.env.*.local
+
+# TS incremental cache / VCS / editor / OS
+*.tsbuildinfo
+.git/
+.gitignore
+.idea/
+.vscode/
+.DS_Store

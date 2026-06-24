@@ -7,6 +7,7 @@ probe; cache abstractions and queues come later.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from redis.asyncio import Redis
@@ -21,15 +22,21 @@ class RedisManager:
 
     def __init__(self) -> None:
         self._client: Redis | None = None
+        self._health_timeout: float = 5.0
 
     async def connect(self, settings: Settings) -> None:
         if self._client is not None:
             return
+        self._health_timeout = settings.health_check_timeout
         self._client = Redis.from_url(
             settings.redis_url,
             max_connections=settings.redis_max_connections,
             decode_responses=True,
             health_check_interval=30,
+            # Fast-failure: bound socket connect + command so a dead Redis fails
+            # in seconds instead of hanging the caller.
+            socket_connect_timeout=settings.redis_socket_timeout,
+            socket_timeout=settings.redis_socket_timeout,
         )
         _logger.info("redis.connected")
 
@@ -49,8 +56,9 @@ class RedisManager:
         if self._client is None:
             return False
         try:
-            return bool(await self._client.ping())
-        except Exception:  # noqa: BLE001 - health probe must never raise
+            async with asyncio.timeout(self._health_timeout):
+                return bool(await self._client.ping())
+        except (Exception, asyncio.TimeoutError):  # noqa: BLE001 - probe never raises
             _logger.warning("redis.health_check.failed", exc_info=True)
             return False
 

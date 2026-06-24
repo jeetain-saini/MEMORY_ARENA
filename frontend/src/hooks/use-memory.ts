@@ -7,7 +7,7 @@ import { getMemory } from "@/services/memories";
 export function useMemory(memoryId: string | null) {
   return useQuery({
     queryKey: ["memory", memoryId],
-    queryFn: () => getMemory(memoryId as string),
+    queryFn: ({ signal }) => getMemory(memoryId as string, signal),
     enabled: !!memoryId,
   });
 }

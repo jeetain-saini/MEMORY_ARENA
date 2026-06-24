@@ -27,6 +27,13 @@ from app.application.services.agent.conversation_capture_policy import (
 
 _logger = logging.getLogger("memoryarena.capture")
 
+# Strong references to in-flight fire-and-forget capture tasks. Without this the
+# event loop only keeps a weak reference, so a task can be garbage-collected
+# mid-flight ("Task was destroyed but it is pending!"). The set is module-level
+# because the service is request-scoped; tasks self-remove on completion, so it
+# stays bounded by the number of concurrently-streaming requests.
+_pending_captures: set[asyncio.Task] = set()
+
 
 class ConversationCaptureService:
     def __init__(
@@ -69,4 +76,6 @@ class ConversationCaptureService:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no running loop (e.g. outside a request) — skip silently
-        loop.create_task(self.maybe_capture(user_id, text))
+        task = loop.create_task(self.maybe_capture(user_id, text))
+        _pending_captures.add(task)
+        task.add_done_callback(_pending_captures.discard)

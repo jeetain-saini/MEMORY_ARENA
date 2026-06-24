@@ -8,7 +8,7 @@ import type { MemorySearchRequest } from "@/types/memory";
 export function useUserMemories(userId: string, limit = 50) {
   return useQuery({
     queryKey: ["memories", "list", userId, limit],
-    queryFn: () => listUserMemories(userId, { limit }),
+    queryFn: ({ signal }) => listUserMemories(userId, { limit }, signal),
     enabled: userId.length > 0,
   });
 }
@@ -16,7 +16,7 @@ export function useUserMemories(userId: string, limit = 50) {
 export function useMemorySearch(request: MemorySearchRequest, enabled: boolean) {
   return useQuery({
     queryKey: ["memories", "search", request],
-    queryFn: () => searchMemories(request),
+    queryFn: ({ signal }) => searchMemories(request, signal),
     enabled: enabled && request.user_id.length > 0,
   });
 }

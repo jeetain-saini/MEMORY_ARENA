@@ -11,18 +11,23 @@ export interface ContradictionResolution {
 export function listUserMemories(
   userId: string,
   params: { limit?: number; offset?: number } = {},
+  signal?: AbortSignal,
 ): Promise<Memory[]> {
   return apiRequest<Memory[]>(`/memories/user/${userId}`, {
     query: { limit: params.limit ?? 50, offset: params.offset ?? 0 },
+    signal,
   });
 }
 
-export function searchMemories(request: MemorySearchRequest): Promise<Memory[]> {
-  return apiRequest<Memory[]>("/memories/search", { method: "POST", body: request });
+export function searchMemories(
+  request: MemorySearchRequest,
+  signal?: AbortSignal,
+): Promise<Memory[]> {
+  return apiRequest<Memory[]>("/memories/search", { method: "POST", body: request, signal });
 }
 
-export function getMemory(memoryId: string): Promise<Memory> {
-  return apiRequest<Memory>(`/memories/${memoryId}`);
+export function getMemory(memoryId: string, signal?: AbortSignal): Promise<Memory> {
+  return apiRequest<Memory>(`/memories/${memoryId}`, { signal });
 }
 
 export function reinforceMemory(memoryId: string, userId: string): Promise<Memory> {

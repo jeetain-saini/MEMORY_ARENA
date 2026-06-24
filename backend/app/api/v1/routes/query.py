@@ -71,6 +71,13 @@ async def query_stream(
         except Exception as exc:  # noqa: BLE001 — propagate as a final error frame
             yield _sse_frame(AgentStreamEvent(event="error", data={"message": str(exc)}))
             yield _sse_frame(AgentStreamEvent(event="done", data={"finish_reason": "error"}))
+        finally:
+            # Deterministically finalize the underlying agent stream on normal
+            # completion AND on client disconnect (GeneratorExit/CancelledError
+            # propagates here), so no DB session / generator is left suspended.
+            aclose = getattr(events, "aclose", None)
+            if aclose is not None:
+                await aclose()
 
     return StreamingResponse(
         event_source(),

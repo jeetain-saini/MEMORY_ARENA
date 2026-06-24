@@ -7,18 +7,23 @@ import type {
   GraphTraversalResult,
 } from "@/types/graph";
 
-export function getGraphMemory(memoryId: string): Promise<GraphMemoryView> {
-  return apiRequest<GraphMemoryView>(`/graph/memory/${memoryId}`);
+export function getGraphMemory(memoryId: string, signal?: AbortSignal): Promise<GraphMemoryView> {
+  return apiRequest<GraphMemoryView>(`/graph/memory/${memoryId}`, { signal });
 }
 
-export function getGraphOverview(userId: string): Promise<GraphOverview> {
-  return apiRequest<GraphOverview>(`/graph/overview/${userId}`);
+export function getGraphOverview(userId: string, signal?: AbortSignal): Promise<GraphOverview> {
+  return apiRequest<GraphOverview>(`/graph/overview/${userId}`, { signal });
 }
 
-export function graphTraverse(nodeId: string, depth: number): Promise<GraphTraversalResult> {
+export function graphTraverse(
+  nodeId: string,
+  depth: number,
+  signal?: AbortSignal,
+): Promise<GraphTraversalResult> {
   return apiRequest<GraphTraversalResult>("/graph/traverse", {
     method: "POST",
     body: { node_id: nodeId, depth },
+    signal,
   });
 }
 

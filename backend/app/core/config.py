@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     postgres_pool_size: int = 20
     postgres_max_overflow: int = 10
     postgres_pool_timeout: int = 30
+    # Fast-failure on datastore outage (production hardening): cap TCP connection
+    # establishment and per-query execution so a dead/slow Postgres surfaces in
+    # seconds instead of hanging on OS TCP defaults or an unbounded query.
+    postgres_connect_timeout: float = 5.0
+    postgres_command_timeout: float = 30.0
+    # Upper bound on every datastore health probe so /health and the startup
+    # readiness loop can never block on a hung connection.
+    health_check_timeout: float = 5.0
 
     # --- Redis -------------------------------------------------------------
     # Optional: only used when CACHE_BACKEND=redis, AUTH_ENABLED=true, or
@@ -95,6 +103,9 @@ class Settings(BaseSettings):
     # the async client is lazy, so it never connects unless actually used.
     redis_url: str = "redis://localhost:6379/0"
     redis_max_connections: int = 50
+    # Fast-failure: bound Redis socket connect + command so a dead Redis fails
+    # in seconds rather than hanging a request or a health probe.
+    redis_socket_timeout: float = 5.0
 
     # --- Neo4j -------------------------------------------------------------
     # Optional: only connected when GRAPH_BACKEND=neo4j (default is the in-memory
@@ -105,6 +116,9 @@ class Settings(BaseSettings):
     neo4j_password: str = "neo4j"
     neo4j_database: str = "neo4j"
     neo4j_max_connection_pool_size: int = 50
+    # Fast-failure: cap Bolt connection establishment so a dead Neo4j surfaces
+    # quickly instead of hanging on the driver's long default.
+    neo4j_connection_timeout: float = 5.0
 
     # --- LLM providers ----------------------------------------------------
     openai_api_key: str | None = None

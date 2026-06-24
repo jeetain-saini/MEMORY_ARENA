@@ -1,13 +1,23 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import { useState, type ReactNode } from "react";
 
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { TopBar } from "@/components/layout/top-bar";
 import { cn } from "@/lib/utils";
 
+// Routes that render full-bleed, without the app sidebar/top bar chrome.
+const CHROMELESS_ROUTES = new Set<string>(["/"]);
+
 export function AppShell({ children }: { children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const pathname = usePathname();
+
+  // The marketing landing page owns the full viewport (its own fixed nav).
+  if (CHROMELESS_ROUTES.has(pathname)) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="flex min-h-screen w-full">

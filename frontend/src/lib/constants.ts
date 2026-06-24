@@ -9,7 +9,8 @@ export interface NavItem {
 }
 
 export const NAV_ITEMS: NavItem[] = [
-  { href: "/", label: "Dashboard", icon: "LayoutDashboard" },
+  // Dashboard moved off "/" so the landing page can own the root route.
+  { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
   { href: "/memories", label: "Memory Explorer", icon: "Database" },
   { href: "/graph", label: "Graph Explorer", icon: "Share2" },
   { href: "/context", label: "Context Playground", icon: "Layers" },

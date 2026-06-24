@@ -1,3 +1,5 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@1,400;1,500;1,600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -51,5 +53,46 @@
   }
   body {
     @apply bg-background text-foreground;
+    /* Inter as the app-wide UI font (loaded above). Scoped to body rather than
+       the spec's blanket `*` selector so component-level fonts (none today) and
+       icon glyphs are never overridden — same visual result, lower risk. */
+    font-family: 'Inter', system-ui, sans-serif;
+  }
+}
+
+/* Display font for premium headings (e.g. the landing hero headline). */
+.font-playfair {
+  font-family: 'Playfair Display', Georgia, serif;
+}
+
+/* ---------------------------------------------------------------------------
+ * Landing hero animations (premium staggered reveal).
+ * Easing: cubic-bezier(0.16, 1, 0.3, 1). Respects prefers-reduced-motion.
+ * ------------------------------------------------------------------------- */
+@keyframes heroReveal {
+  from { opacity: 0; filter: blur(8px); }
+  to { opacity: 1; filter: blur(0); }
+}
+@keyframes heroFadeUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes heroZoom {
+  from { transform: scale(1.08); }
+  to { transform: scale(1); }
+}
+
+.hero-reveal { opacity: 0; animation: heroReveal 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.hero-fade-up { opacity: 0; animation: heroFadeUp 0.9s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.hero-zoom { animation: heroZoom 1.8s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .hero-reveal,
+  .hero-fade-up,
+  .hero-zoom {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    filter: none !important;
   }
 }

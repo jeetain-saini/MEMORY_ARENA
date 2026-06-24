@@ -160,7 +160,10 @@ def test_context_failure_is_terminal_error() -> None:
     assert resp.answer == ""
 
 
-def test_generation_failure_is_terminal_error() -> None:
+def test_generation_failure_falls_back_gracefully() -> None:
+    # A failing LLM no longer kills the response: the agent retries, then falls
+    # back to a deterministic answer from retrieved context — never empty/error.
     runtime, uid = _runtime(provider=FakeLLMProvider(raises=True))
     resp = asyncio.run(runtime.respond(_request(uid)))
-    assert resp.finish_reason == FINISH_ERROR
+    assert resp.finish_reason == FINISH_COMPLETED
+    assert resp.answer.strip() != ""

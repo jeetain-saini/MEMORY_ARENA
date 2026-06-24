@@ -285,6 +285,25 @@ async def node_build(state: AgentState, toolset: AgentToolSet) -> AgentState:
     return state
 
 
+# The configured LLM (e.g. some NVIDIA NIM models) intermittently returns an
+# empty completion. Retry a few times, then deterministically fall back to the
+# retrieved context, so a user query never resolves to a blank answer.
+_GENERATE_ATTEMPTS = 3
+
+
+def _fallback_answer(state: AgentState) -> str:
+    """A non-empty answer synthesized from retrieved memories when the LLM fails.
+
+    The user never sees a blank response: if memories were retrieved, surface
+    them; otherwise say so plainly.
+    """
+    package = state.context_package
+    context_text = (package.context_text if package is not None else "").strip()
+    if context_text:
+        return f"Based on your memories: {context_text}"
+    return "I couldn't find anything in your memories to answer that."
+
+
 async def node_generate(
     state: AgentState, provider: LLMProvider, counter: TokenCounter
 ) -> AgentState:
@@ -292,18 +311,24 @@ async def node_generate(
         return state
     prompt = build_answer_prompt(state)
     start = _now(state)
-    try:
-        raw = await provider.generate(prompt, system=ANSWER_SYSTEM_PROMPT)
-    except Exception as exc:  # noqa: BLE001 — generation failure is terminal
-        state.steps.append(
-            AgentStepResult(
-                step="generate", ok=False, error=str(exc), duration_ms=_elapsed_ms(state, start)
-            )
-        )
-        state.finish_reason = FINISH_ERROR
-        state.terminated = True
-        return state
-    answer = _truncate((raw or "").strip(), state.config.answer_max_tokens, counter)
+
+    raw = ""
+    last_error: str | None = None
+    for _attempt in range(_GENERATE_ATTEMPTS):
+        try:
+            candidate = (await provider.generate(prompt, system=ANSWER_SYSTEM_PROMPT) or "").strip()
+        except Exception as exc:  # noqa: BLE001 — retry, then fall back
+            last_error = str(exc)
+            candidate = ""
+        if candidate:  # answer validation: only accept non-empty completions
+            raw = candidate
+            break
+
+    used_fallback = not raw
+    if used_fallback:
+        raw = _fallback_answer(state)  # guarantees a non-empty answer
+
+    answer = _truncate(raw, state.config.answer_max_tokens, counter)
     state.answer = answer
     tokens = counter.count(answer)
     state.total_tokens += tokens
@@ -312,7 +337,11 @@ async def node_generate(
         AgentStepResult(
             step="generate",
             ok=True,
-            summary="generated answer",
+            summary=(
+                f"generated answer (fallback after empty/failed generation: {last_error})"
+                if used_fallback
+                else "generated answer"
+            ),
             tokens=tokens,
             duration_ms=_elapsed_ms(state, start),
         )

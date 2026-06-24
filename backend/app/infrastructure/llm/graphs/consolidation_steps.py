@@ -36,6 +36,14 @@ WORKFLOW_VERSION = "consolidation-v1"
 _SCORE_THRESHOLD = 0.35       # minimum Jaccard to be worth classifying
 _SUPERSEDE_JACCARD = 0.70     # high overlap → likely duplicate/supersedes
 _CONTRADICT_JACCARD = 0.40    # moderate overlap + negation XOR → contradicts
+# Value-replacement supersede: same subject, only the value differs (e.g.
+# "my favorite language is Rust" -> "...is Go"). Requires a substantial shared
+# subject core with just a small differing value on each side, so it fires on
+# single-valued-attribute updates but not on unrelated memories that merely share
+# a few words ("I like Python" vs "I like Java" -> only 2 shared, stays unique).
+_REPLACE_JACCARD = 0.50
+_REPLACE_MIN_SHARED = 3
+_REPLACE_MAX_DIFF = 2
 
 # Confidence values assigned by the heuristic (sequential) engine.
 _SUPERSEDE_CONFIDENCE = 0.82
@@ -90,6 +98,24 @@ def _heuristic_classify(
             "supersedes",
             _SUPERSEDE_CONFIDENCE,
             f"High lexical overlap ({similarity:.2f}) with new memory being more detailed.",
+        )
+
+    # Value replacement: the newer statement of a single-valued attribute
+    # supersedes the older even with no negation and no length increase
+    # ("favorite language is Rust" -> "...is Go": shared subject, value Rust->Go).
+    new_set, cand_set = set(new_tokens), set(cand_tokens)
+    shared, new_only, cand_only = new_set & cand_set, new_set - cand_set, cand_set - new_set
+    if (
+        similarity >= _REPLACE_JACCARD
+        and len(shared) >= _REPLACE_MIN_SHARED
+        and 0 < len(new_only) <= _REPLACE_MAX_DIFF
+        and 0 < len(cand_only) <= _REPLACE_MAX_DIFF
+    ):
+        return (
+            "supersedes",
+            _SUPERSEDE_CONFIDENCE,
+            f"Same subject with a changed value "
+            f"({'/'.join(sorted(cand_only))} -> {'/'.join(sorted(new_only))}); newer supersedes.",
         )
 
     if (

@@ -38,6 +38,7 @@ from app.application.services.intelligence_config import IntelligenceConfig
 from app.application.services.maintenance.config import MaintenanceConfig
 from app.application.services.maintenance.inference_event_handler import InferenceEventHandler
 from app.application.services.maintenance.memory_summary_service import MemorySummaryService
+from app.application.services.maintenance.summary_event_handler import SummaryRefreshEventHandler
 from app.application.services.maintenance.relationship_inference_service import (
     RelationshipInferenceService,
 )
@@ -166,6 +167,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # (and the global ones). No-op when CACHE_BACKEND=noop. Shares the singleton
     # cache provider with the request services.
     CacheInvalidationEventHandler(build_cache_provider()).register(in_process_dispatcher)
+
+    # --- Wire immediate summary refresh (product behaviour) --------------
+    # Summaries update the moment a user's memory set changes (create / archive /
+    # supersede), so they no longer depend on the nightly maintenance sweep. The
+    # deterministic generator is cheap and refresh is idempotent. Always on.
+    # Summarize EVERY memory type (the default scope set omits preferences/facts/
+    # skills) so a stated favourite/fact is reflected in the summary immediately.
+    from app.domain.value_objects.memory_type import MemoryType as _MemoryType
+
+    summary_refresh_service = MemorySummaryService(
+        lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
+        DeterministicSummaryGenerator(),
+        MaintenanceConfig(summary_scopes=tuple(_MemoryType)),
+    )
+    SummaryRefreshEventHandler(summary_refresh_service).register(in_process_dispatcher)
 
     # --- Wire the audit trail (Stage 19.3) -------------------------------
     # A single catch-all handler records every memory write, lifecycle

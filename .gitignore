@@ -21,6 +21,9 @@ node_modules/
 out/
 npm-debug.log*
 yarn-error.log*
+# TypeScript incremental build cache — a generated artifact that should never be
+# committed (it churns on every build and bloats incremental state).
+*.tsbuildinfo
 
 # ---- Docker / data volumes --------------------------------------------------
 *.pid

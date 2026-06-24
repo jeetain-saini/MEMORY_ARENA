@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { readAgentStream } from "@/lib/sse";
 import { queryAgentStream } from "@/services/agent";
@@ -24,6 +24,11 @@ export function useAgentStream() {
     controllerRef.current?.abort();
     controllerRef.current = null;
   }, []);
+
+  // Abort any in-flight SSE stream when the component unmounts (e.g. the user
+  // navigates away mid-response). Without this the fetch/stream keeps running
+  // and setState fires on an unmounted component — a leak.
+  useEffect(() => () => controllerRef.current?.abort(), []);
 
   const run = useCallback(
     async (userId: string, query: string) => {

@@ -1,22 +1,28 @@
-"""Request body-size limit middleware (production hardening).
+"""Request body-size limit — pure ASGI middleware (production hardening).
 
 Starlette imposes no cap on request body size, so without a guard a single client
-can POST an arbitrarily large payload and exhaust memory (the JSON is buffered and
-parsed in full). This middleware rejects any request whose ``Content-Length``
-exceeds ``max_bytes`` with ``413 Payload Too Large`` in the standard error
-envelope, before the body is read. Per-field validation (content/metadata length,
-search ``limit``) still applies on top of this whole-request cap.
+can POST an arbitrarily large payload and exhaust memory (the body is buffered and
+parsed in full). This middleware rejects requests over ``max_bytes`` with
+``413 Payload Too Large``.
 
-A reverse proxy (nginx ``client_max_body_size``) should enforce the same limit at
-the edge in production; this is the in-app defense in depth, and it covers chunked
-requests that omit ``Content-Length`` by streaming-counting the body.
+It is a *pure ASGI* middleware (not ``BaseHTTPMiddleware``) on purpose:
+``BaseHTTPMiddleware`` buffers the response, which breaks Server-Sent-Events
+streaming (``/query/stream``) with "Unexpected message received: http.request".
+Here we never touch ``send`` — only wrap ``receive`` to count incoming body
+bytes — so streaming responses are never disturbed.
+
+Detection: the ``Content-Length`` fast path rejects before the app runs (clean,
+enveloped 413). For chunked bodies (no Content-Length) the wrapped ``receive``
+raises ``HTTPException(413)`` once the cap is crossed; the framework's exception
+middleware turns that into a 413 while the body read is bounded at the cap.
 """
 
 from __future__ import annotations
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import JSONResponse, Response
+import json
+
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.exceptions import _envelope
 from app.core.logging import get_request_id
@@ -24,45 +30,56 @@ from app.core.logging import get_request_id
 _MESSAGE = "Request body exceeds the maximum allowed size."
 
 
-class BodySizeLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, *, max_bytes: int) -> None:
-        super().__init__(app)
-        self._max_bytes = max_bytes
-
-    def _too_large(self) -> JSONResponse:
-        return JSONResponse(
-            status_code=413,
-            content=_envelope(get_request_id(), "payload_too_large", _MESSAGE),
-        )
-
-    async def dispatch(self, request: Request, call_next) -> Response:
-        # Fast path: trust a declared Content-Length and reject before reading.
-        declared = request.headers.get("content-length")
-        if declared is not None:
+def _content_length(scope: Scope) -> int | None:
+    for name, value in scope.get("headers", []):
+        if name == b"content-length":
             try:
-                if int(declared) > self._max_bytes:
-                    return self._too_large()
+                return int(value)
             except ValueError:
-                pass  # malformed header -> fall through to the streaming guard
+                return None
+    return None
 
-        # Streaming guard for chunked bodies (no/again Content-Length): count bytes
-        # as they arrive and abort once the cap is crossed. We buffer and re-emit
-        # the body via a patched receive so the downstream handler still sees it.
-        body = b""
-        more_body = True
-        while more_body:
-            message = await request.receive()
-            if message["type"] != "http.request":
-                continue
-            body += message.get("body", b"")
-            if len(body) > self._max_bytes:
-                return self._too_large()
-            more_body = message.get("more_body", False)
 
-        async def _replay() -> dict:
-            nonlocal body
-            chunk, body = body, b""
-            return {"type": "http.request", "body": chunk, "more_body": False}
+class BodySizeLimitMiddleware:
+    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
 
-        request._receive = _replay  # type: ignore[attr-defined]
-        return await call_next(request)
+    async def _send_413(self, send: Send) -> None:
+        body = json.dumps(
+            _envelope(get_request_id(), "payload_too_large", _MESSAGE)
+        ).encode()
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"application/json"),
+                (b"content-length", str(len(body)).encode()),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        # Fast path: a declared Content-Length over the cap is rejected up front
+        # (the realistic case — JSON clients and reverse proxies send it).
+        declared = _content_length(scope)
+        if declared is not None and declared > self.max_bytes:
+            return await self._send_413(send)
+
+        total = 0
+
+        async def receive_capped() -> Message:
+            nonlocal total
+            message = await receive()
+            if message["type"] == "http.request":
+                total += len(message.get("body", b""))
+                if total > self.max_bytes:
+                    # Chunked overflow: stop buffering and let the exception
+                    # middleware render a 413 (response has not started yet).
+                    raise StarletteHTTPException(status_code=413, detail=_MESSAGE)
+            return message
+
+        await self.app(scope, receive_capped, send)

@@ -20,7 +20,7 @@ const categoryFor = (p: string) => CATEGORY[p] ?? { label: "Other sources", icon
 function SourceRow({ citation }: { citation: AgentCitation }) {
   const [open, setOpen] = useState(false);
   return (
-    <li className="rounded-lg border border-white/10 bg-white/[0.025]">
+    <li className="rounded-lg border border-border bg-card">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -40,7 +40,7 @@ function SourceRow({ citation }: { citation: AgentCitation }) {
         />
       </button>
       {open ? (
-        <div className="space-y-1.5 border-t border-white/10 px-3 py-2 text-xs">
+        <div className="space-y-1.5 border-t border-border px-3 py-2 text-xs">
           <p className="leading-relaxed text-foreground/90">{citation.content}</p>
           <div className="flex flex-wrap gap-x-4 gap-y-1 text-muted-foreground">
             <span>
@@ -79,7 +79,7 @@ export function SourceAttribution({ citations }: { citations: AgentCitation[] })
   }
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02]">
+    <div className="rounded-xl border border-border bg-card">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -87,7 +87,7 @@ export function SourceAttribution({ citations }: { citations: AgentCitation[] })
         className="flex w-full items-center gap-2 px-4 py-3 text-left"
       >
         <span className="text-sm font-medium text-foreground">Sources Used</span>
-        <span className="rounded-full border border-white/10 bg-white/[0.06] px-2 py-0.5 text-xs text-muted-foreground">
+        <span className="rounded-full border border-border bg-card px-2 py-0.5 text-xs text-muted-foreground">
           {citations.length}
         </span>
         <ChevronDown

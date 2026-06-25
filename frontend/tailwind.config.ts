@@ -15,6 +15,10 @@ const config: Config = {
       screens: { "2xl": "1400px" },
     },
     extend: {
+      fontFamily: {
+        grotesk: ["var(--font-grotesk)", "ui-sans-serif", "system-ui", "sans-serif"],
+        spacemono: ["var(--font-space-mono)", "ui-monospace", "monospace"],
+      },
       colors: {
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",

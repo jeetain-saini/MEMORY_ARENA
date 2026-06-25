@@ -137,6 +137,9 @@ class MemoryResponseSchema(BaseModel):
     retrieval_count: int = 0
     created_at: datetime
     updated_at: datetime
+    # Phase D: read-only exposure of stored metadata (evidence + inference fields)
+    # for the evolution/insights UI. Additive; existing clients ignore it.
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
     @classmethod
     def from_dto(cls, dto: CreateMemoryResponse) -> "MemoryResponseSchema":

@@ -22,7 +22,7 @@ import { MEMORY_TYPES } from "@/types/api";
 
 function HealthTile({ label, value }: { label: string; value: number }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+    <div className="rounded-xl border border-border bg-card p-3">
       <div className="text-gradient text-2xl font-semibold tabular-nums">
         <AnimatedNumber value={value} />
       </div>
@@ -88,9 +88,9 @@ export default function DashboardPage() {
           <Link
             key={href}
             href={href}
-            className="lift group flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.035] p-4 backdrop-blur-xl"
+            className="lift group flex items-center gap-3 rounded-xl border border-border bg-card p-4 "
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500/20 to-violet-500/20 text-indigo-300 transition-colors group-hover:text-indigo-200">
+            <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-primary/15 to-primary/10 text-primary transition-colors group-hover:text-primary">
               <Icon className="h-4 w-4" />
             </span>
             <span className="text-sm font-medium text-foreground">{label}</span>
@@ -154,9 +154,9 @@ export default function DashboardPage() {
                     <span className="capitalize text-muted-foreground">{type}</span>
                     <span className="tabular-nums text-foreground">{count}</span>
                   </div>
-                  <div className="h-2 overflow-hidden rounded-full bg-white/[0.06]">
+                  <div className="h-2 overflow-hidden rounded-full bg-card">
                     <div
-                      className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-violet-500 transition-all duration-500"
+                      className="h-full rounded-full bg-gradient-to-r from-primary to-primary transition-all duration-500"
                       style={{ width: `${(count / categories.max) * 100}%` }}
                     />
                   </div>
@@ -229,7 +229,7 @@ export default function DashboardPage() {
                 {recentEvents.map((e) => (
                   <li
                     key={e.id}
-                    className="flex items-center gap-3 rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2"
+                    className="flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2"
                   >
                     <span
                       className={cn(

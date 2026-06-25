@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Space_Grotesk, Space_Mono } from "next/font/google";
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/layout/app-shell";
@@ -8,6 +9,18 @@ import { UserProvider } from "@/providers/user-provider";
 
 import "./globals.css";
 
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-grotesk",
+  display: "swap",
+});
+const spaceMono = Space_Mono({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-space-mono",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "MemoryArena Dashboard",
   description: "Explore, query, and inspect MemoryArena memories.",
@@ -16,14 +29,16 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" className="dark" suppressHydrationWarning>
-      <body className="relative min-h-screen bg-background text-foreground antialiased">
-        {/* Ambient premium backdrop: soft indigo glows on near-black. */}
+      <body
+        className={`${spaceGrotesk.variable} ${spaceMono.variable} relative min-h-screen bg-background text-foreground antialiased`}
+      >
+        {/* Ambient backdrop: a single, very subtle warm teal tint. */}
         <div
           aria-hidden
           className="pointer-events-none fixed inset-0 -z-10"
           style={{
             backgroundImage:
-              "radial-gradient(60% 50% at 15% 0%, rgba(99,102,241,0.12), transparent 60%), radial-gradient(50% 50% at 100% 0%, rgba(139,92,246,0.10), transparent 55%), radial-gradient(60% 60% at 50% 120%, rgba(56,189,248,0.06), transparent 60%)",
+              "radial-gradient(70% 50% at 50% 0%, rgba(63,125,116,0.05), transparent 65%)",
           }}
         />
         <QueryProvider>

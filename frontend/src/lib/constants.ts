@@ -22,20 +22,20 @@ export const NAV_ITEMS: NavItem[] = [
 // Badge color classes per memory type (Tailwind utility strings).
 // Translucent, dark-theme-friendly badge palettes (tinted glass pills).
 export const MEMORY_TYPE_COLORS: Record<MemoryType, string> = {
-  fact: "bg-blue-500/15 text-blue-300 border-blue-400/25",
-  goal: "bg-purple-500/15 text-purple-300 border-purple-400/25",
-  preference: "bg-pink-500/15 text-pink-300 border-pink-400/25",
-  skill: "bg-emerald-500/15 text-emerald-300 border-emerald-400/25",
-  project: "bg-amber-500/15 text-amber-300 border-amber-400/25",
-  experience: "bg-cyan-500/15 text-cyan-300 border-cyan-400/25",
+  fact: "bg-blue-500/15 text-blue-700 border-blue-400/25",
+  goal: "bg-purple-500/15 text-purple-700 border-purple-400/25",
+  preference: "bg-pink-500/15 text-pink-700 border-pink-400/25",
+  skill: "bg-emerald-500/15 text-emerald-700 border-emerald-400/25",
+  project: "bg-amber-500/15 text-amber-700 border-amber-400/25",
+  experience: "bg-cyan-500/15 text-cyan-700 border-cyan-400/25",
 };
 
 export const STATUS_COLORS: Record<MemoryStatus, string> = {
-  active: "bg-green-500/15 text-green-300 border-green-400/25",
-  archived: "bg-gray-500/15 text-gray-300 border-gray-400/20",
-  superseded: "bg-purple-500/15 text-purple-300 border-purple-400/25",
-  forgotten: "bg-amber-500/15 text-amber-300 border-amber-400/25",
-  deleted: "bg-red-500/15 text-red-300 border-red-400/25",
+  active: "bg-green-500/15 text-green-700 border-green-400/25",
+  archived: "bg-gray-500/15 text-gray-700 border-gray-400/20",
+  superseded: "bg-purple-500/15 text-purple-700 border-purple-400/25",
+  forgotten: "bg-amber-500/15 text-amber-700 border-amber-400/25",
+  deleted: "bg-red-500/15 text-red-700 border-red-400/25",
 };
 
 // Graph edge styling (stroke color + whether it is dashed / directed).

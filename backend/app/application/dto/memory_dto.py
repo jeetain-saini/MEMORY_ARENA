@@ -49,6 +49,10 @@ class CreateMemoryResponse:
     # Stage 17: episodic/semantic category + retrieval-frequency tracking.
     category: MemoryCategory | None = None
     retrieval_count: int = 0
+    # Phase D (read-only exposure): surface stored metadata (incl. evidence,
+    # inference reason/topic/stage) so the read-side UI can render evolution.
+    # Additive and backward-compatible; no schema, migration, or logic change.
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

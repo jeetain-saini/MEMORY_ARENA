@@ -22,7 +22,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-screen w-full">
       {/* Desktop sidebar — glass rail */}
-      <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-white/[0.02] backdrop-blur-xl md:block">
+      <aside className="hidden w-64 shrink-0 border-r border-border bg-card  md:block">
         <div className="sticky top-0 h-screen">
           <AppSidebar />
         </div>
@@ -32,11 +32,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen ? (
         <div className="fixed inset-0 z-40 md:hidden">
           <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            className="absolute inset-0 bg-black/60 "
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <aside className="absolute left-0 top-0 h-full w-64 border-r border-white/10 bg-background/95 backdrop-blur-xl">
+          <aside className="absolute left-0 top-0 h-full w-64 border-r border-border bg-background/95 ">
             <AppSidebar onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>

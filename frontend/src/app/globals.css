@@ -26,28 +26,30 @@
     --radius: 0.5rem;
   }
 
+  /* MemoryArena premium warm SaaS system. The whole app reads these tokens, so
+     the entire surface shares the landing page's aesthetic from one place.
+     Both :root and .dark carry the warm values (the html keeps class="dark",
+     so redefining .dark flips the app without touching markup). */
+  :root,
   .dark {
-    /* MemoryArena premium dark system — near-black canvas, indigo accent,
-       hairline borders. The whole app reads these tokens, so the entire surface
-       inherits the landing page's aesthetic from one place. */
-    --background: 240 10% 4%;
-    --foreground: 210 20% 96%;
-    --card: 240 9% 7%;
-    --card-foreground: 210 20% 96%;
-    --primary: 250 84% 66%;
-    --primary-foreground: 0 0% 100%;
-    --secondary: 240 6% 13%;
-    --secondary-foreground: 210 20% 96%;
-    --muted: 240 6% 13%;
-    --muted-foreground: 240 5% 64%;
-    --accent: 240 6% 16%;
-    --accent-foreground: 210 20% 98%;
-    --destructive: 0 72% 51%;
-    --destructive-foreground: 210 20% 98%;
-    --border: 240 6% 16%;
-    --input: 240 6% 16%;
-    --ring: 250 84% 66%;
-    --radius: 0.75rem;
+    --background: 43 16% 91%; /* #ECEAE5 */
+    --foreground: 0 0% 9%; /* #171717 */
+    --card: 40 23% 96%; /* #F7F5F1 */
+    --card-foreground: 0 0% 9%;
+    --primary: 171 33% 37%; /* #3F7D74 teal */
+    --primary-foreground: 40 23% 96%;
+    --secondary: 40 18% 93%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 40 18% 93%;
+    --muted-foreground: 0 0% 36%; /* #5D5D5D */
+    --accent: 40 18% 90%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 48% 56%; /* #C45858 */
+    --destructive-foreground: 40 23% 96%;
+    --border: 41 15% 77%; /* #CDC8BD */
+    --input: 41 15% 77%;
+    --ring: 171 33% 37%;
+    --radius: 1.25rem; /* ~20px */
   }
 }
 
@@ -55,28 +57,31 @@
  * Shared premium design tokens & utilities (glass, gradient, motion).
  * ------------------------------------------------------------------------- */
 @layer utilities {
-  /* Glassmorphism surfaces. (Background opacities use native CSS — arbitrary
-     bracket values are not permitted inside @apply.) */
+  /* Warm premium surfaces (formerly glassmorphism). Subtle muted cards with
+     hairline borders — no heavy blur, no neon. Names kept for compatibility so
+     existing components inherit the new look without edits. */
   .glass {
-    @apply border border-white/10 backdrop-blur-xl;
-    background-color: rgba(255, 255, 255, 0.04);
+    @apply border border-border;
+    background-color: hsl(var(--card));
   }
   .glass-strong {
-    @apply border border-white/10 backdrop-blur-2xl;
-    background-color: rgba(255, 255, 255, 0.06);
+    @apply border border-border;
+    background-color: hsl(var(--card));
   }
-  /* Gradient text accents. */
+  /* Text accents — solid in the warm system (no bright gradients). */
   .text-gradient {
-    @apply bg-gradient-to-br from-white via-white to-white/55 bg-clip-text text-transparent;
+    @apply text-foreground;
   }
   .text-gradient-accent {
-    @apply bg-gradient-to-r from-indigo-300 via-violet-200 to-white bg-clip-text text-transparent;
+    @apply text-primary;
   }
-  /* Hover lift for interactive cards. (Easing uses native CSS — arbitrary
-     bracket values are not permitted inside @apply.) */
+  /* Hover lift for interactive cards — small rise + very subtle shadow. */
   .lift {
-    @apply transition-all duration-300 hover:-translate-y-0.5 hover:border-white/20;
+    @apply transition-all duration-300 hover:-translate-y-0.5;
     transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+  .lift:hover {
+    box-shadow: 0 6px 20px rgba(23, 23, 23, 0.05);
   }
 }
 
@@ -102,16 +107,17 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Inter as the app-wide UI font (loaded above). Scoped to body rather than
-       the spec's blanket `*` selector so component-level fonts (none today) and
-       icon glyphs are never overridden — same visual result, lower risk. */
-    font-family: 'Inter', system-ui, sans-serif;
+    /* Space Grotesk app-wide (loaded via next/font as --font-grotesk), with
+       graceful fallbacks. Matches the landing page typography. */
+    font-family: var(--font-grotesk), 'Inter', system-ui, sans-serif;
   }
 }
 
-/* Display font for premium headings (e.g. the landing hero headline). */
+/* Heading accent — unified to Space Grotesk so every heading matches the
+   landing page (previously Playfair). Class name kept for compatibility. */
 .font-playfair {
-  font-family: 'Playfair Display', Georgia, serif;
+  font-family: var(--font-grotesk), 'Inter', system-ui, sans-serif;
+  font-style: normal;
 }
 
 /* ---------------------------------------------------------------------------

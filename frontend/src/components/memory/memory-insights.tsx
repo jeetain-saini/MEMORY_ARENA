@@ -1,7 +1,8 @@
 "use client";
 
-import { ArrowRightLeft, GitBranch, Layers, Sparkles, type LucideIcon } from "lucide-react";
+import { ArrowRightLeft, GitBranch, Layers, Sparkles, TrendingUp, type LucideIcon } from "lucide-react";
 
+import { MemoryEvolution } from "@/components/memory/memory-evolution";
 import { MemoryTypeBadge } from "@/components/shared/memory-type-badge";
 import { useGraphMemory } from "@/hooks/use-graph";
 import { useSummaries } from "@/hooks/use-summaries";
@@ -21,7 +22,7 @@ const LINEAGE: ReadonlySet<GraphEdgeType> = new Set<GraphEdgeType>([
 
 function Tile({ label, value }: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2.5">
+    <div className="rounded-lg border border-border bg-card p-2.5">
       <div className="text-gradient text-lg font-semibold tabular-nums">{value}</div>
       <div className="text-[11px] text-muted-foreground">{label}</div>
     </div>
@@ -65,8 +66,21 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
     s.source_memory_ids.includes(memory.id),
   );
 
+  const evidence = memory.metadata?.evidence;
+
   return (
     <div className="space-y-5">
+      {/* Memory evolution (Phase D) — real evidence history, or empty state */}
+      <Section icon={TrendingUp} title="Memory evolution">
+        {evidence ? (
+          <MemoryEvolution evidence={evidence} />
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            No evidence history yet — this memory hasn&apos;t been reinforced across conversations.
+          </p>
+        )}
+      </Section>
+
       {/* Metrics */}
       <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
         <Tile label="Relevance" value={formatScore(memory.total_score)} />
@@ -93,24 +107,24 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
       <Section icon={Layers} title="Lifecycle">
         <ol className="space-y-1.5 text-sm">
           <li className="flex gap-2">
-            <span className="text-emerald-300">Created</span>
+            <span className="text-emerald-600">Created</span>
             <span className="text-muted-foreground">{formatDateTime(memory.created_at)}</span>
           </li>
           {memory.updated_at !== memory.created_at ? (
             <li className="flex gap-2">
-              <span className="text-sky-300">Updated</span>
+              <span className="text-sky-600">Updated</span>
               <span className="text-muted-foreground">{formatDateTime(memory.updated_at)}</span>
             </li>
           ) : null}
           {memory.is_promoted ? (
             <li className="flex gap-2">
-              <span className="text-amber-300">Promoted</span>
+              <span className="text-amber-600">Promoted</span>
               <span className="text-muted-foreground">recurring / high-value memory</span>
             </li>
           ) : null}
           {memory.status === "archived" ? (
             <li className="flex gap-2">
-              <span className="text-zinc-300">Archived</span>
+              <span className="text-zinc-600">Archived</span>
               <span className="text-muted-foreground">
                 superseded by a newer contradictory memory; kept for history, hidden from retrieval
               </span>
@@ -118,13 +132,13 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
           ) : null}
           {memory.status === "superseded" ? (
             <li className="flex gap-2">
-              <span className="text-violet-300">Superseded</span>
+              <span className="text-violet-600">Superseded</span>
               <span className="text-muted-foreground">replaced by a newer memory</span>
             </li>
           ) : null}
           {memory.status === "forgotten" ? (
             <li className="flex gap-2">
-              <span className="text-orange-300">Forgotten</span>
+              <span className="text-orange-600">Forgotten</span>
               <span className="text-muted-foreground">aged out: old, low-value, rarely used</span>
             </li>
           ) : null}
@@ -146,7 +160,7 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
               return (
                 <li
                   key={`${r.edge.source_id}:${r.edge.target_id}:${r.edge.edge_type}`}
-                  className="rounded-lg border border-white/10 bg-white/[0.025] p-2.5 text-sm"
+                  className="rounded-lg border border-border bg-card p-2.5 text-sm"
                 >
                   <span
                     className="mr-2 text-xs font-medium uppercase tracking-wide"
@@ -175,7 +189,7 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
               return (
                 <li
                   key={`${r.edge.source_id}:${r.edge.target_id}:${r.edge.edge_type}`}
-                  className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.025] p-2.5 text-sm"
+                  className="flex items-center gap-2 rounded-lg border border-border bg-card p-2.5 text-sm"
                 >
                   <span
                     className="shrink-0 rounded-full px-2 py-0.5 text-[11px]"
@@ -202,7 +216,7 @@ export function MemoryInsights({ memory, userId }: { memory: Memory; userId: str
             {membership.map((s) => (
               <li
                 key={s.id}
-                className="rounded-lg border border-white/10 bg-white/[0.025] p-2.5 text-sm"
+                className="rounded-lg border border-border bg-card p-2.5 text-sm"
               >
                 <div className="mb-1 flex items-center gap-2">
                   <MemoryTypeBadge type={s.scope} />

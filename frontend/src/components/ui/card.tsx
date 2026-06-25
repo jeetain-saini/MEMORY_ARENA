@@ -9,7 +9,7 @@ const Card = React.forwardRef<HTMLDivElement, React.HTMLAttributes<HTMLDivElemen
       className={cn(
         // Premium glass surface: translucent card + hairline border + soft
         // shadow. Shared by every page, so the whole app stays cohesive.
-        "rounded-xl border border-white/10 bg-white/[0.035] text-card-foreground shadow-xl shadow-black/20 backdrop-blur-xl",
+        "rounded-xl border border-border bg-card text-card-foreground shadow-xl shadow-black/20 ",
         className,
       )}
       {...props}

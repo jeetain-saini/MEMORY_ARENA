@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 
 export function TopBar({ onMenu }: { onMenu?: () => void }) {
   return (
-    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-white/10 bg-background/70 px-4 backdrop-blur-xl">
+    <header className="sticky top-0 z-30 flex h-14 items-center gap-3 border-b border-border bg-background/70 px-4 ">
       <Button
         variant="ghost"
         size="icon"

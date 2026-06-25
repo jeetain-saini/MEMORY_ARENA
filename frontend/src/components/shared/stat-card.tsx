@@ -15,7 +15,7 @@ export function StatCard({ title, value, hint, className }: StatCardProps) {
       {/* Accent wash in the corner for depth. */}
       <div
         aria-hidden
-        className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-indigo-500/15 blur-2xl"
+        className="pointer-events-none absolute -right-10 -top-10 h-24 w-24 rounded-full bg-primary/10 blur-2xl"
       />
       <CardHeader className="pb-2">
         <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">

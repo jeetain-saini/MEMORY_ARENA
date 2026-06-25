@@ -9,9 +9,9 @@ export function LoadingRows({ rows = 3, className }: { rows?: number; className?
       {Array.from({ length: rows }).map((_, i) => (
         <div
           key={i}
-          className="relative h-16 w-full overflow-hidden rounded-xl border border-white/10 bg-white/[0.03]"
+          className="relative h-16 w-full overflow-hidden rounded-xl border border-border bg-card"
         >
-          <span className="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_infinite] bg-gradient-to-r from-transparent via-white/10 to-transparent" />
+          <span className="absolute inset-0 -translate-x-full animate-[shimmer_1.6s_infinite] bg-gradient-to-r from-transparent via-foreground/5 to-transparent" />
         </div>
       ))}
     </div>
@@ -27,9 +27,9 @@ interface PanelProps {
 
 function Panel({ icon, title, description, children }: PanelProps) {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-12 text-center backdrop-blur-xl">
+    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-border bg-card p-12 text-center ">
       {icon ? (
-        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
+        <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-border bg-card">
           {icon}
         </div>
       ) : null}

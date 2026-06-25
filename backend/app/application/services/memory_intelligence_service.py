@@ -20,6 +20,7 @@ from app.application.exceptions import MemoryNotFoundException, MemoryValidation
 from app.application.interfaces.event_dispatcher import EventDispatcher
 from app.application.interfaces.unit_of_work import UnitOfWork
 from app.application.presenters import memory_to_response
+from app.application.services.inference.evidence import EVIDENCE_KEY, append_evidence
 from app.application.services.authorization import authorize_owner
 from app.application.services.decay_strategies import (
     DecayStrategy,
@@ -72,6 +73,19 @@ class MemoryIntelligenceService:
         async with self._uow as uow:
             memory = await self._require(uow, memory_id, user_id)
             memory.reinforce(step if step is not None else self._config.reinforcement_step)
+            # Phase C.2 — append-only evidence: every reinforcement records the
+            # evolving confidence/importance + bumps counts, never overwriting
+            # first_seen or prior history. Stored in metadata.evidence (no migration).
+            memory.metadata[EVIDENCE_KEY] = append_evidence(
+                memory.metadata.get(EVIDENCE_KEY),
+                message="Reinforced by repeated relevance",
+                confidence=memory.score.calculate_total_score(),
+                importance=memory.score.importance,
+                reason="Memory reinforced (repeated relevance).",
+                source_type="reinforcement",
+                topic=memory.metadata.get("inference_topic"),
+                progression_stage=memory.metadata.get("progression_stage"),
+            )
             updated = await uow.memories.update(memory)
             await uow.commit()
         await self._dispatcher.dispatch(memory.pull_events())

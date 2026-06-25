@@ -25,4 +25,5 @@ def memory_to_response(memory: Memory) -> CreateMemoryResponse:
         retrieval_count=memory.retrieval_count,
         created_at=memory.created_at,
         updated_at=memory.updated_at,
+        metadata=dict(memory.metadata or {}),
     )

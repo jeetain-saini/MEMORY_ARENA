@@ -46,10 +46,20 @@ def test_disabled_does_not_submit() -> None:
 
 
 def test_policy_rejected_does_not_submit() -> None:
+    # Policy-rejected AND non-inferrable (unknown topic) -> still dropped.
     proc = _FakeProcessor()
-    out = asyncio.run(_svc(proc).maybe_capture(uuid4(), "What is FastAPI?"))
+    out = asyncio.run(_svc(proc).maybe_capture(uuid4(), "What is the weather today?"))
     assert out is False
     assert proc.jobs == []
+
+
+def test_inferrable_question_is_captured() -> None:
+    # Phase A: a question about a known technology is captured via inference,
+    # even though the capture policy alone would reject it as a question.
+    proc = _FakeProcessor()
+    out = asyncio.run(_svc(proc).maybe_capture(uuid4(), "What is FastAPI?"))
+    assert out is True
+    assert len(proc.jobs) == 1
 
 
 def test_submit_failure_is_isolated() -> None:

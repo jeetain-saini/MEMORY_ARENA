@@ -74,7 +74,9 @@ from app.infrastructure.graph.factory import build_graph_repository
 from app.infrastructure.graph.in_process_processor import InProcessGraphJobProcessor
 from app.infrastructure.graph.neo4j import neo4j_manager
 from app.infrastructure.observability.metrics_factory import build_metrics_sink
+from app.application.services.inference.semantic_inference import SemanticKnowledgeInferenceService
 from app.infrastructure.llm.graphs.factory import build_consolidation_engine, build_workflow_engine
+from app.infrastructure.llm.providers.factory import build_extraction_llm_provider
 from app.infrastructure.llm.in_process_consolidation_processor import (
     InProcessConsolidationJobProcessor,
 )
@@ -217,6 +219,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         engine=build_workflow_engine(),
         uow_factory=lambda: SQLAlchemyUnitOfWork(postgres_manager.sessionmaker),
         dispatcher=in_process_dispatcher,
+        # Phase B: semantic LLM inference (best-effort, falls back to Phase A).
+        inference_service=SemanticKnowledgeInferenceService(build_extraction_llm_provider()),
     )
     workflow_processor = InProcessWorkflowJobProcessor(ingest_use_case.process)
     app.state.workflow_processor = workflow_processor

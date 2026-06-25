@@ -21,6 +21,7 @@ from app.application.interfaces.workflow_job_processor import (
     WorkflowJob,
     WorkflowJobProcessor,
 )
+from app.application.services.inference.knowledge_inference import infer as infer_knowledge
 from app.application.services.agent.conversation_capture_policy import (
     ConversationCapturePolicy,
 )
@@ -52,7 +53,13 @@ class ConversationCaptureService:
 
         Returns True iff a job was submitted. Never raises.
         """
-        if not self._enabled or not self._policy.should_capture(text):
+        # Capture if the policy accepts the turn OR the inference layer can derive
+        # durable knowledge from it (e.g. "What is Rust?" -> "Interested in Rust"),
+        # which the policy alone would reject as a question. Additive: never drops
+        # a turn the policy already accepted.
+        if not self._enabled or not (
+            self._policy.should_capture(text) or infer_knowledge(text) is not None
+        ):
             return False
         try:
             await self._processor.submit(

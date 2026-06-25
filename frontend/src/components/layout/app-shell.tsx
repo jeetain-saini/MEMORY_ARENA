@@ -21,8 +21,8 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen w-full">
-      {/* Desktop sidebar */}
-      <aside className="hidden w-64 shrink-0 border-r bg-card md:block">
+      {/* Desktop sidebar — glass rail */}
+      <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-white/[0.02] backdrop-blur-xl md:block">
         <div className="sticky top-0 h-screen">
           <AppSidebar />
         </div>
@@ -32,11 +32,11 @@ export function AppShell({ children }: { children: ReactNode }) {
       {mobileOpen ? (
         <div className="fixed inset-0 z-40 md:hidden">
           <div
-            className="absolute inset-0 bg-black/50"
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => setMobileOpen(false)}
             aria-hidden
           />
-          <aside className="absolute left-0 top-0 h-full w-64 border-r bg-card">
+          <aside className="absolute left-0 top-0 h-full w-64 border-r border-white/10 bg-background/95 backdrop-blur-xl">
             <AppSidebar onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
@@ -44,7 +44,10 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar onMenu={() => setMobileOpen(true)} />
-        <main className={cn("flex-1 p-4 md:p-6")}>{children}</main>
+        {/* `key` re-triggers the entrance animation on route change. */}
+        <main key={pathname} className={cn("page-enter mx-auto w-full max-w-7xl flex-1 p-4 md:p-8")}>
+          {children}
+        </main>
       </div>
     </div>
   );

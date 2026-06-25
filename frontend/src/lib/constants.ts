@@ -11,6 +11,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   // Dashboard moved off "/" so the landing page can own the root route.
   { href: "/dashboard", label: "Dashboard", icon: "LayoutDashboard" },
+  { href: "/timeline", label: "Memory Timeline", icon: "History" },
   { href: "/memories", label: "Memory Explorer", icon: "Database" },
   { href: "/graph", label: "Graph Explorer", icon: "Share2" },
   { href: "/context", label: "Context Playground", icon: "Layers" },
@@ -19,21 +20,22 @@ export const NAV_ITEMS: NavItem[] = [
 ];
 
 // Badge color classes per memory type (Tailwind utility strings).
+// Translucent, dark-theme-friendly badge palettes (tinted glass pills).
 export const MEMORY_TYPE_COLORS: Record<MemoryType, string> = {
-  fact: "bg-blue-100 text-blue-800 border-blue-200",
-  goal: "bg-purple-100 text-purple-800 border-purple-200",
-  preference: "bg-pink-100 text-pink-800 border-pink-200",
-  skill: "bg-emerald-100 text-emerald-800 border-emerald-200",
-  project: "bg-amber-100 text-amber-800 border-amber-200",
-  experience: "bg-cyan-100 text-cyan-800 border-cyan-200",
+  fact: "bg-blue-500/15 text-blue-300 border-blue-400/25",
+  goal: "bg-purple-500/15 text-purple-300 border-purple-400/25",
+  preference: "bg-pink-500/15 text-pink-300 border-pink-400/25",
+  skill: "bg-emerald-500/15 text-emerald-300 border-emerald-400/25",
+  project: "bg-amber-500/15 text-amber-300 border-amber-400/25",
+  experience: "bg-cyan-500/15 text-cyan-300 border-cyan-400/25",
 };
 
 export const STATUS_COLORS: Record<MemoryStatus, string> = {
-  active: "bg-green-100 text-green-800 border-green-200",
-  archived: "bg-gray-100 text-gray-700 border-gray-200",
-  superseded: "bg-purple-100 text-purple-800 border-purple-200",
-  forgotten: "bg-amber-100 text-amber-800 border-amber-200",
-  deleted: "bg-red-100 text-red-800 border-red-200",
+  active: "bg-green-500/15 text-green-300 border-green-400/25",
+  archived: "bg-gray-500/15 text-gray-300 border-gray-400/20",
+  superseded: "bg-purple-500/15 text-purple-300 border-purple-400/25",
+  forgotten: "bg-amber-500/15 text-amber-300 border-amber-400/25",
+  deleted: "bg-red-500/15 text-red-300 border-red-400/25",
 };
 
 // Graph edge styling (stroke color + whether it is dashed / directed).

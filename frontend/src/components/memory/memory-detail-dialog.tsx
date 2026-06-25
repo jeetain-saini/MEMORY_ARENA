@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Archive, ArrowUpRight, Pencil, RotateCcw, Share2, Star, Trash2, Zap } from "lucide-react";
 
+import { MemoryInsights } from "@/components/memory/memory-insights";
 import { MemoryTypeBadge } from "@/components/shared/memory-type-badge";
 import { ScoreBar } from "@/components/shared/score-bar";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -41,7 +42,7 @@ export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className="max-h-[88vh] max-w-2xl overflow-y-auto">
         {memory ? (
           <>
             <DialogHeader>
@@ -165,6 +166,12 @@ export function MemoryDetailDialog({ memory, userId, onOpenChange }: Props) {
                 </Link>
               </Button>
             </div>
+
+            <Separator />
+
+            {/* Explainability: why this exists/was retrieved, lifecycle,
+                contradiction lineage, relationships, summary membership. */}
+            <MemoryInsights memory={memory} userId={userId} />
           </>
         ) : null}
       </DialogContent>

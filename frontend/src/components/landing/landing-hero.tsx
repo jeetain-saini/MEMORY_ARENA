@@ -58,7 +58,7 @@ export function LandingHero() {
             >
               <Link
                 href="/memories"
-                className="group inline-flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-black shadow-lg shadow-black/20 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.03]"
+                className="group inline-flex items-center gap-2 rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-black shadow-lg shadow-black/20 transition-transform duration-300 ease-premium hover:scale-[1.03]"
               >
                 Explore Memory
                 <ArrowRight className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-1" />

@@ -51,6 +51,10 @@ const config: Config = {
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
       },
+      // Named premium easing — avoids ambiguous arbitrary `ease-[cubic-bezier(...)]`.
+      transitionTimingFunction: {
+        premium: "cubic-bezier(0.16, 1, 0.3, 1)",
+      },
       keyframes: {
         "accordion-down": {
           from: { height: "0" },

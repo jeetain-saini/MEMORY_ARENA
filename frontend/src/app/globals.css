@@ -27,24 +27,73 @@
   }
 
   .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
+    /* MemoryArena premium dark system — near-black canvas, indigo accent,
+       hairline borders. The whole app reads these tokens, so the entire surface
+       inherits the landing page's aesthetic from one place. */
+    --background: 240 10% 4%;
+    --foreground: 210 20% 96%;
+    --card: 240 9% 7%;
+    --card-foreground: 210 20% 96%;
+    --primary: 250 84% 66%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 6% 13%;
+    --secondary-foreground: 210 20% 96%;
+    --muted: 240 6% 13%;
+    --muted-foreground: 240 5% 64%;
+    --accent: 240 6% 16%;
+    --accent-foreground: 210 20% 98%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 210 20% 98%;
+    --border: 240 6% 16%;
+    --input: 240 6% 16%;
+    --ring: 250 84% 66%;
+    --radius: 0.75rem;
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Shared premium design tokens & utilities (glass, gradient, motion).
+ * ------------------------------------------------------------------------- */
+@layer utilities {
+  /* Glassmorphism surfaces. (Background opacities use native CSS — arbitrary
+     bracket values are not permitted inside @apply.) */
+  .glass {
+    @apply border border-white/10 backdrop-blur-xl;
+    background-color: rgba(255, 255, 255, 0.04);
+  }
+  .glass-strong {
+    @apply border border-white/10 backdrop-blur-2xl;
+    background-color: rgba(255, 255, 255, 0.06);
+  }
+  /* Gradient text accents. */
+  .text-gradient {
+    @apply bg-gradient-to-br from-white via-white to-white/55 bg-clip-text text-transparent;
+  }
+  .text-gradient-accent {
+    @apply bg-gradient-to-r from-indigo-300 via-violet-200 to-white bg-clip-text text-transparent;
+  }
+  /* Hover lift for interactive cards. (Easing uses native CSS — arbitrary
+     bracket values are not permitted inside @apply.) */
+  .lift {
+    @apply transition-all duration-300 hover:-translate-y-0.5 hover:border-white/20;
+    transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+/* Page content entrance (used by the app shell main region). */
+@keyframes appFadeUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.page-enter { animation: appFadeUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+
+/* Skeleton shimmer sweep. */
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter { animation: none !important; opacity: 1 !important; transform: none !important; }
 }
 
 @layer base {

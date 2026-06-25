@@ -1,9 +1,10 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { Send, Square } from "lucide-react";
 import { useState } from "react";
 
-import { CitationList } from "@/components/agent/citation-list";
+import { SourceAttribution } from "@/components/agent/source-attribution";
 import { TraceTimeline } from "@/components/agent/trace-timeline";
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState, LoadingRows, NoUserState } from "@/components/shared/states";
@@ -18,6 +19,21 @@ export default function AgentPage() {
   const { userId, ready, hasUser } = useCurrentUser();
   const [query, setQuery] = useState("");
   const { state, run, cancel, reset } = useAgentStream();
+  const queryClient = useQueryClient();
+
+  // An agent turn captures the user's message into a memory server-side, but the
+  // ingestion runs asynchronously off the request path — so the /memories,
+  // /graph, /summaries, and analytics caches are stale after a turn. Once the
+  // turn finishes, wait for the background capture to land, then invalidate
+  // those caches so the new memory shows up everywhere without a manual refresh.
+  const ask = async (text: string) => {
+    await run(userId, text);
+    window.setTimeout(() => {
+      for (const key of ["memories", "analytics", "graph", "summaries"]) {
+        queryClient.invalidateQueries({ queryKey: [key] });
+      }
+    }, 4000);
+  };
 
   if (!ready) return <LoadingRows rows={4} />;
   if (!hasUser) return <NoUserState />;
@@ -38,7 +54,7 @@ export default function AgentPage() {
           onChange={(e) => setQuery(e.target.value)}
           rows={2}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(userId, query);
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ask(query);
           }}
         />
         <div className="flex items-center gap-2">
@@ -47,7 +63,7 @@ export default function AgentPage() {
               <Square className="h-4 w-4" /> Stop
             </Button>
           ) : (
-            <Button onClick={() => run(userId, query)} disabled={!query.trim()}>
+            <Button onClick={() => ask(query)} disabled={!query.trim()}>
               <Send className="h-4 w-4" /> Ask agent
             </Button>
           )}
@@ -89,14 +105,7 @@ export default function AgentPage() {
               </CardContent>
             </Card>
 
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm">Citations</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <CitationList citations={state.citations} />
-              </CardContent>
-            </Card>
+            <SourceAttribution citations={state.citations} />
           </div>
 
           <Card className="h-fit">
